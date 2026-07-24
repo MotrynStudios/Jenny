@@ -2,6 +2,17 @@ import os
 import requests
 from dotenv import load_dotenv
 
+# Import cache functions from ai module
+try:
+    from ai import get_cached_tavily_result, cache_tavily_result
+except ImportError:
+    # Fallback if ai module is not available yet
+    def get_cached_tavily_result(query):
+        return None
+    
+    async def cache_tavily_result(query, result):
+        pass
+
 load_dotenv()
 
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
@@ -74,7 +85,7 @@ def perform_search(query, max_results=3):
     Returns a summarized string of search results or None if search fails.
     """
     if not TAVILY_API_KEY:
-        print("Tavily API key not found, skipping search")
+        print("[SEARCH] Tavily API key not found, skipping search")
         return None
     
     try:
@@ -93,52 +104,76 @@ def perform_search(query, max_results=3):
         
         data = response.json()
         
-        # Extract the most relevant information
+        # Extract the most relevant information (concise format)
         summary_parts = []
         
         # Add the direct answer if available
         if data.get("answer"):
-            summary_parts.append(f"Direct answer: {data['answer']}")
+            answer = data['answer']
+            if len(answer) > 300:
+                answer = answer[:300] + "..."
+            summary_parts.append(f"Answer: {answer}")
         
-        # Add top results
+        # Add top results (keep very concise)
         if data.get("results"):
+            summary_parts.append("Results:")
             for i, result in enumerate(data["results"][:max_results], 1):
                 title = result.get("title", "No title")
-                url = result.get("url", "")
                 content = result.get("content", "")
                 
-                # Truncate content if too long
-                if len(content) > 200:
-                    content = content[:200] + "..."
+                # Trim content significantly
+                if len(content) > 150:
+                    content = content[:150] + "..."
                 
                 summary_parts.append(f"{i}. {title}: {content}")
         
         if summary_parts:
-            return "\n".join(summary_parts)
+            result = "\n".join(summary_parts)
+            print(f"[SEARCH] Search successful, result length: {len(result)} chars")
+            return result
         else:
-            print("No useful search results found")
+            print("[SEARCH] No useful search results found")
             return None
             
     except requests.exceptions.RequestException as e:
-        print(f"Tavily search request failed: {e}")
+        print(f"[SEARCH] Tavily request failed: {e}")
         return None
     except Exception as e:
-        print(f"Tavily search error: {e}")
+        print(f"[SEARCH] Tavily error: {e}")
         return None
 
 def search_and_summarize(query):
     """
-    Determine if search is needed, perform it, and return summarized results.
+    Determine if search is needed, check cache, perform it if needed, and return results.
     Returns None if search is not needed or fails.
+    Integrates with AI module's Tavily cache.
     """
     if not needs_search(query):
         return None
     
-    print(f"[SEARCH] Performing web search for: {query[:50]}...")
+    print(f"[SEARCH] Query needs search: {query[:50]}...")
+    
+    # Check AI cache first
+    cached_result = get_cached_tavily_result(query)
+    if cached_result:
+        print(f"[SEARCH] Using cached result")
+        return f"Web search results for '{query}':\n{cached_result}"
+    
+    # Perform actual search
+    print(f"[SEARCH] Performing web search...")
     results = perform_search(query)
     
     if results:
-        print(f"[SEARCH] Search successful, results length: {len(results)}")
+        # Cache the result
+        import asyncio
+        try:
+            # Try to cache asynchronously if in async context
+            loop = asyncio.get_event_loop()
+            loop.create_task(cache_tavily_result(query, results))
+        except RuntimeError:
+            # Fallback if not in async context
+            pass
+        
         return f"Web search results for '{query}':\n{results}"
     else:
         print("[SEARCH] Search failed or returned no results")
