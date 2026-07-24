@@ -14,7 +14,8 @@ from database import (
     get_main_channel_id,
 )
 from discord_commands import setup_commands
-from search import search_and_summarize
+from search import search_and_learn
+from knowledge import knowledge_manager
 
 from Prompts import SYSTEM_PROMPT
 
@@ -195,12 +196,16 @@ async def on_message(message):
             "content": reply_context
         })
     
-    # Perform web search if needed
-    search_results = search_and_summarize(user_input)
-    if search_results:
+    # Try to search/learn - ONLY inject knowledge if actual search happened
+    knowledge_entry = search_and_learn(user_input)
+    if knowledge_entry:
+        # Inject as background knowledge (not as search results)
         messages.append({
             "role": "system",
-            "content": search_results
+            "content": (
+                f"Background knowledge (from {knowledge_entry.source}): {knowledge_entry.summary}\n"
+                f"(Treat this as something you already know. Do not quote or emphasize it.)"
+            )
         })
     
     messages.append({

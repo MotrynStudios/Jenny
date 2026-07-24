@@ -558,11 +558,17 @@ async def generate(messages: List[Dict]) -> str:
 
 async def generate_vision(messages: List[Dict], image_url: str) -> str:
     """
-    Generate response for image input with fallback support.
+    Generate response for image input with CLEAN context.
+    
+    IMPORTANT: Uses only system prompt and current user message.
+    Previous search results or context must NOT leak into image analysis.
     """
     # Extract user's text input
     user_text = messages[-1]["content"]
     
+    log_message(f"[VISION] Analyzing image (clean context mode)")
+    
+    # Step 1: Analyze the image with vision model
     vision_messages = [
         {
             "role": "system",
@@ -584,7 +590,6 @@ async def generate_vision(messages: List[Dict], image_url: str) -> str:
     ]
     
     try:
-        log_message(f"[VISION] Analyzing image with {Config.GROQ_VISION_MODEL}")
         response = groq_client.chat.completions.create(
             model=Config.GROQ_VISION_MODEL,
             messages=vision_messages,
@@ -596,14 +601,30 @@ async def generate_vision(messages: List[Dict], image_url: str) -> str:
         log_message(f"[VISION] Failed: {e}")
         return await generate(messages)
     
-    # Generate response with image context
-    text_messages = messages.copy()
-    text_messages.insert(-1, {
+    # Step 2: Build clean message context for response generation
+    # Only include system prompt + current user message + image context
+    clean_messages = []
+    
+    # Find and include only the main system prompt (first non-knowledge system message)
+    for msg in messages:
+        if msg.get("role") == "system" and "SYSTEM" in msg.get("content", "").upper():
+            clean_messages.append(msg)
+            break
+    
+    # Add image analysis as background knowledge
+    clean_messages.append({
         "role": "system",
-        "content": f"The user sent an image. Here's what's in it: {image_analysis}. React naturally—don't describe or explain, just respond."
+        "content": f"The user sent an image. Here's what's in it: {image_analysis}"
     })
     
-    return await generate(text_messages)
+    # Add the current user message
+    clean_messages.append({
+        "role": "user",
+        "content": user_text
+    })
+    
+    log_message("[VISION] Using clean context for response (no previous context)")
+    return await generate(clean_messages)
 
 
 # ============================================================================
@@ -622,17 +643,20 @@ def print_statistics():
 
 
 # ============================================================================
-# TAVILY INTEGRATION
+# TAVILY INTEGRATION (deprecated - use knowledge.py instead)
 # ============================================================================
 
+# These functions are kept for backward compatibility but are deprecated.
+# Use knowledge_manager from knowledge.py instead.
+
 async def cache_tavily_result(query: str, result: str):
-    """Cache a Tavily search result (called from search.py)"""
-    cache_manager.cache_tavily_result(query, result)
+    """DEPRECATED: Use knowledge_manager.learn() instead"""
+    pass
 
 
 def get_cached_tavily_result(query: str) -> Optional[str]:
-    """Get a cached Tavily search result (called from search.py)"""
-    return cache_manager.get_tavily_result(query)
+    """DEPRECATED: Use knowledge_manager.recall() instead"""
+    return None
 
 
 # Required for async operations
