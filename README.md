@@ -1,10 +1,21 @@
-# Jenny Discord Bot
+# theinevitableinvincible-jenny
+
+Jenny is an open-source, multi-server Discord companion for relaxed chat, voice conversations, and grounded Minecraft modpack/config help.
 
 Jenny is a multi-server Discord bot with persistent chat context, searchable server history, Minecraft mod and config retrieval, image/GIF analysis, and an optional voice companion service. Guild settings, profiles, usage totals, and channel memories stay scoped to their server. A person's long-term memory follows their stable Discord user ID across DMs, server text, and voice, while short conversation histories remain separate by conversation.
 
 Jenny uses the Jenny Belle character profile in `Jenny/Prompts.py`: a 19-year-old freelancer from Long Beach, Los Angeles, who has played Minecraft since 2018. She likes relaxed chats, creative projects, cats, and clever jokes; she dislikes bullying, needless drama, and confident guessing. She is written to sound relaxed and personable while being transparent that Jenny is an AI bot when asked. Server text and voice prompts include the current speaker's and Jenny's live server roles; DM prompts do not have server roles.
 
-> **License status:** This project does not yet include a license. Until its owner selects one, GitHub visitors can view the code but do not have an explicit license grant to reuse or redistribute it.
+## License and attribution
+
+This project is released under the [MIT License](LICENSE), copyright Mohamed Ayman Elnashar. You may use, modify, and redistribute it, including in commercial projects. Keep the copyright and license notices with copies or substantial portions of the software. The MIT License does not require a separate product, advertising, or marketing credit.
+
+## Contact
+
+Maintainer: Mohamed Ayman Elnashar  
+Discord: `theinevitableinvincible`
+
+Open to hiring, questions, suggestions, and collaboration. Please use GitHub Issues for bug reports and feature requests, and follow [SECURITY.md](SECURITY.md) for security reports.
 
 The bot grounds Minecraft claims in the local mod/config corpus configured for that Jenny installation. At present, one installation has one shared RAG index for every Discord server it serves. If different servers use different modpacks, run separate bot installations or keep that limitation in mind; per-guild indexes are not implemented yet. When local evidence is missing, Jenny can use web search for background and labels it as external rather than treating it as proof of the installed pack. This reduces unsupported claims; no language model can guarantee zero hallucinations, so review high impact answers and tune retrieval against your own files.
 
@@ -76,21 +87,22 @@ At runtime, vector retrieval is limited to Minecraft/mod/config questions and sh
 
 ## What the bot can do
 
-- Reply to every message in a server's configured main channel, mentions/replies elsewhere, and every DM.
+- Reply in servers only when Jenny's name or bot account is mentioned; replies to other users and ordinary main-channel messages do not trigger her. Every DM is treated as a direct conversation.
 - Keep bounded recent context plus automatically summarized long-term channel, voice, and user memory. Active streams are checked every 15 minutes; a new stream gets an initial summary, then summaries run after 25 new records or six hours of activity.
 - Search recent stored server chat and summarize channels.
-- Answer server, member, profile-history, last-message, and token-usage questions; `/help` privately lists commands available to the caller, `/serverinfo` shows activity windows, and `/user` shows member stats.
+- Answer server, member, profile-history, last-message, and token-usage questions; `/help` privately lists commands available in that context. `/serverinfo` and `/user` have 24-hour, 7-day, and 30-day buttons that show only the selected activity window.
 - Show member avatars and roles. Assign and remove roles only when the requester is an administrator, outranks the role, and Jenny also has Manage Roles and outranks it.
 - Include the current speaker's and Jenny's actual guild roles in server text and voice context, so role-aware answers use live server information.
-- Show a Minecraft Singleplayer 26.3 Playing activity with elapsed time in the title, refreshed once per minute and reset when the Python bot restarts.
-- Analyze attached and replied-to images. Animated GIFs are sampled at up to three frames before their visual evidence is passed to the chat model. Recent image context can be reused during text and voice follow-ups.
+- Show a Minecraft Singleplayer 26.3 Playing activity with elapsed time in the title, refreshed every 15 seconds and reset when the Python bot restarts. Bot presence cannot use a custom large image; the supplied transparent grass-block asset is prepared locally at `Jenny/assets/minecraft_grass_block.png`.
+- Analyze attached images, replied-to images, Discord embed previews, and direct GIF/image links from trusted Discord, Tenor, and Giphy hosts. Animated GIFs are sampled at up to three frames before their visual evidence is passed to the chat model. Recent image context can be reused during text and voice follow-ups.
 - Transcribe voice-message attachments posted in Jenny's configured channel.
 - Send incoming server messages, Jenny's generated replies, and profile events to the selected logs channel. Direct messages stay private in the local database.
-- Show per-user AI token counts plus speech-to-text and text-to-speech processing time for daily, weekly, and monthly periods. Server-wide usage is administrator-only; `/myusage` shows only the caller's totals.
+- Show per-user AI token counts, chat message counts, total voice-channel connected time, voice inputs, captured speech time, and speech-to-text/text-to-speech processing time for selectable periods. Server-wide usage is administrator-only; `/myusage` shows only the caller's totals and is available in DMs.
+- Voice-channel connection time begins when this tracker is installed and running; Discord does not provide historical voice-presence totals, and downtime across restarts is excluded.
 - Browse the latest 100 voice inputs and stage timings with `/voicetimes`; full turn records are written to the ignored `logs/voice-turns.jsonl` file.
 - Keep separate Python and Node terminal logs in `logs/python-runtime.log` and `logs/voice-runtime.log`. Logs rotate or are pruned automatically and remain local.
 - Let users privately view `/mymemory` or clear conversation memory with `/forgetmydata`. Detailed chat, voice, profile-history, token, and speech records are pruned after the configured retention period (`DATA_RETENTION_DAYS`, default 90).
-- Search the indexed mod/config corpus, with optional web lookup when local evidence is missing.
+- Search the indexed mod/config corpus, with exact item/config metadata matches alongside semantic retrieval. Roster questions such as "what mods is Jenny playing?" return the complete local mod manifest. When local evidence is missing, optional web lookup can add clearly labeled background, not proof of installed-pack behavior.
 
 ## How conversation summaries work
 
@@ -102,7 +114,13 @@ Server text summaries are scoped to their text channel; voice summaries are scop
 
 The default 90-day cleanup removes old detailed message, voice, usage, profile-history, image-context, and short conversation-history records. Rolling summaries are retained until the user clears their memory with `/forgetmydata` or an administrator clears their history. This lets Jenny remember useful context without keeping every raw conversation indefinitely.
 
-See [CHANGELOG.md](CHANGELOG.md) for Jenny's current 0.85 feature list. Discord does not expose members' private profile bios through the bot API.
+See [CHANGELOG.md](CHANGELOG.md) for Jenny's current 0.87 feature list. `/health` checks the Discord connection, Python API, optional voice service, local RAG corpus, log channel permissions, and Message Content Intent configuration. `/mods` and `/trivia` use the locally extracted mod summary; pack trivia does not ask an AI model to invent quiz facts.
+
+Jenny's Minecraft Playing status is refreshed every 15 seconds and shows `Minecraft` with a second line for `Singleplayer · Version 26.3 · HH:MM:SS`. Discord's bot gateway presence supports basic activity status but does not expose the desktop game's custom artwork card controls. The provided grass-block image has been cleaned and saved as `Jenny/assets/minecraft_grass_block.png` for use in a supported client-side Rich Presence integration. The elapsed timer resets when the Python bot restarts.
+
+If chat appears silent, check the Python runtime log for `[EVENT] on_message received`. If that trace never appears, verify Message Content Intent is enabled both in the code and in the Discord Developer Portal, then confirm the bot has View Channel and Read Message History permissions. `/health` also reports the code-side intent and configured log-channel send/embed permissions.
+
+Discord does not expose members' private profile bios through the bot API.
 
 The activity is a bot-supported Playing status, not the full Rich Presence integration available to desktop games. The elapsed time is shown as text and advances once per minute.
 
@@ -129,3 +147,4 @@ requirements.txt          Python dependencies
 ```
 
 The two root-level Python modules are runtime components, not extraction tools. `jenny_api_server.py` connects the optional Node voice process to the already-running Python bot, and `jenny_rag_integration.py` is imported by the bot for live retrieval. The `tools/rag/` folder contains commands that an owner runs to build or refresh local modpack data.
+
