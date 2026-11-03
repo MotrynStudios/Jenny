@@ -6,6 +6,7 @@ Allows Node.js voice component to communicate with Python Jenny bot
 
 import os
 import sys
+import json
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable
 from datetime import datetime, timezone
@@ -191,9 +192,27 @@ async def root() -> Dict[str, Any]:
 
 @app.get("/health")
 async def health() -> Dict[str, Any]:
-    """Health check endpoint"""
-    return {"status": "healthy", "rag_available": RAG_AVAILABLE,
-            "voice_service_online": voice_service_is_online()}
+    """Report runtime readiness separately from optional voice availability."""
+    root = Path(__file__).resolve().parent
+    manifest_path = root / "data" / "embeddings" / "rag_manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        indexed_documents = int(manifest.get("documents", 0))
+    except (OSError, ValueError, TypeError):
+        indexed_documents = 0
+    return {
+        "status": "healthy" if jenny_generate is not None else "starting",
+        "bot_initialized": jenny_generate is not None,
+        "rag_available": RAG_AVAILABLE,
+        "rag_ready": bool(RAG_AVAILABLE and indexed_documents > 0),
+        "rag_documents": indexed_documents,
+        "voice_service_online": voice_service_is_online(),
+        "voice_heartbeat_age_seconds": (
+            max(0, int((datetime.now(timezone.utc) - voice_service_last_heartbeat).total_seconds()))
+            if voice_service_last_heartbeat else None
+        ),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
 
 @app.post("/voice/process")
 async def process_voice_input(request: VoiceRequest) -> VoiceResponse:
@@ -771,3 +790,4 @@ if __name__ == "__main__":
     print("This enables voice service integration")
     print("Run with: python jenny_api_server.py")
     start_api_server()
+

@@ -52,3 +52,4 @@ echo - Mention Jenny or say her name to get a voice reply
 echo.
 echo Press any key to exit this launcher (bots will continue running)
 pause >nul
+

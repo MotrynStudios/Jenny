@@ -308,3 +308,4 @@ def limit_history_by_tokens(history: List[Dict[str, str]], max_tokens: int) -> L
         selected.append({"role": entry.get("role", "user"), "content": content})
         used_tokens += cost
     return list(reversed(selected))
+

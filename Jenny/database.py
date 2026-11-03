@@ -140,6 +140,21 @@ def init_database() -> None:
     if "speech_duration_ms" not in voice_chat_columns:
         cursor.execute("ALTER TABLE voice_chat ADD COLUMN speech_duration_ms INTEGER NOT NULL DEFAULT 0")
 
+    # This table measures voice-channel presence separately from speech, STT,
+    # and TTS duration, which are tracked by voice_chat and service_usage.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS voice_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            guild_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            channel_id TEXT NOT NULL,
+            joined_at TEXT NOT NULL,
+            left_at TEXT,
+            duration_ms INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_voice_sessions_guild_user_joined ON voice_sessions(guild_id, user_id, joined_at)")
+
     # Settings table for bot configuration
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS settings (
@@ -647,6 +662,102 @@ def get_server_activity_stats(guild_id: str, since: str,
             "voice_duration_ms": int(voice_row[1])}
 
 
+def start_voice_session(guild_id: str, user_id: str, channel_id: str,
+                        joined_at: Optional[datetime] = None) -> None:
+    """Record a member joining or moving into a voice channel."""
+    started = (joined_at or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO voice_sessions (guild_id, user_id, channel_id, joined_at) VALUES (?, ?, ?, ?)",
+        (str(guild_id), str(user_id), str(channel_id), started.isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def close_stale_voice_sessions() -> int:
+    """Discard only unclosed intervals left by a prior bot process.
+
+    A gateway disconnect does not tell us when a member left voice, so counting
+    through the next process start would incorrectly include bot downtime.
+    Completed sessions remain intact; only the unknown tail is closed at its
+    recorded start time (zero additional duration).
+    """
+    conn = get_connection()
+    conn.execute("UPDATE voice_sessions SET left_at = joined_at, duration_ms = 0 WHERE left_at IS NULL")
+    closed_count = int(conn.execute("SELECT changes()").fetchone()[0])
+    conn.commit()
+    conn.close()
+    return closed_count
+
+
+def end_voice_session(guild_id: str, user_id: str,
+                      left_at: Optional[datetime] = None) -> int:
+    """Close open presence intervals for a member and return their duration."""
+    ended = (left_at or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT id, joined_at FROM voice_sessions WHERE guild_id = ? AND user_id = ? AND left_at IS NULL",
+        (str(guild_id), str(user_id)),
+    ).fetchall()
+    total_ms = 0
+    for row in rows:
+        try:
+            started = datetime.fromisoformat(row["joined_at"])
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            duration = max(0, int((ended - started.astimezone(timezone.utc)).total_seconds() * 1000))
+        except (TypeError, ValueError):
+            duration = 0
+        conn.execute(
+            "UPDATE voice_sessions SET left_at = ?, duration_ms = ? WHERE id = ?",
+            (ended.isoformat(), duration, row["id"]),
+        )
+        total_ms += duration
+    conn.commit()
+    conn.close()
+    return total_ms
+
+
+def get_voice_session_time(guild_id: str, since: str,
+                           user_id: Optional[str] = None) -> int:
+    """Return channel connection time overlapping a window, including open sessions."""
+    try:
+        boundary = datetime.fromisoformat(since)
+        if boundary.tzinfo is None:
+            boundary = boundary.replace(tzinfo=timezone.utc)
+        boundary = boundary.astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        boundary = datetime.min.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    clauses = ["guild_id = ?", "joined_at < ?", "(left_at IS NULL OR left_at >= ?)"]
+    params: List[Any] = [str(guild_id), now.isoformat(), boundary.isoformat()]
+    if user_id is not None:
+        clauses.append("user_id = ?")
+        params.append(str(user_id))
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT joined_at, left_at FROM voice_sessions WHERE " + " AND ".join(clauses), params
+    ).fetchall()
+    conn.close()
+    total_ms = 0
+    for row in rows:
+        try:
+            joined = datetime.fromisoformat(row["joined_at"])
+            left = datetime.fromisoformat(row["left_at"]) if row["left_at"] else now
+            if joined.tzinfo is None:
+                joined = joined.replace(tzinfo=timezone.utc)
+            if left.tzinfo is None:
+                left = left.replace(tzinfo=timezone.utc)
+            start = max(joined.astimezone(timezone.utc), boundary)
+            end = min(left.astimezone(timezone.utc), now)
+            if end > start:
+                total_ms += int((end - start).total_seconds() * 1000)
+        except (TypeError, ValueError):
+            continue
+    return total_ms
+
+
 def append_voice_turn_log(entry: Dict[str, Any]) -> None:
     """Append one completed voice turn as JSONL for transparent diagnostics."""
     log_dir = _SCRIPT_DIR.parent / "logs"
@@ -683,6 +794,8 @@ def cleanup_expired_records(retention_days: int = 90) -> Dict[str, int]:
     deleted["legacy_user_history_cleared"] = max(0, legacy_cursor.rowcount)
     conn.execute("DELETE FROM image_context_cache WHERE created_at < ?", (cutoff,))
     deleted["image_context_cache"] = max(0, conn.execute("SELECT changes()").fetchone()[0])
+    conn.execute("DELETE FROM voice_sessions WHERE joined_at < ? AND left_at IS NOT NULL", (cutoff,))
+    deleted["voice_sessions"] = max(0, conn.execute("SELECT changes()").fetchone()[0])
     conn.commit()
     conn.close()
 
@@ -1738,10 +1851,10 @@ def initialize_changelog() -> None:
     """Ensure the current public release entry exists without deleting history."""
     try:
         add_changelog_entry(
-            version="0.86",
-            description="Jenny 0.86 activity, message routing, pack tools, and diagnostics",
+            version="0.87",
+            description="Jenny 0.87 mention-only chat, broader vision input, stronger modpack retrieval, and activity reporting",
             features=[
-                "Conversational chat in the configured main channel, direct messages, and server mentions or replies",
+                "Mention-triggered server chat and natural conversations in direct messages",
                 "Voice conversations with speech recognition, spoken replies, and chat, voice, or both reply modes",
                 "Image and animated GIF understanding, plus image context for follow-up conversations",
                 "Minecraft mod, modpack, config, and recipe answers grounded in indexed RAG data",
@@ -1761,7 +1874,17 @@ def initialize_changelog() -> None:
                 "Personable concise chat and original playful song responses",
                 "Jenny Belle character profile and live speaker/Jenny role metadata in server chat prompts",
                 "Minecraft singleplayer 26.3 Playing activity with a restart-resetting elapsed session title",
+                "Minecraft grass-block rich-presence art asset with transparent background (local asset; bot presence API cannot display custom art)",
                 "Pack-grounded /mods and interactive /trivia tools, with natural language entry points",
+                "Full installed-mod roster answers from the local manifest, including questions phrased as what Jenny is playing",
+                "Exact metadata matching alongside semantic RAG retrieval for item, recipe, and config questions",
+                "Mod-scoped semantic results when a question explicitly names one mod, to reduce cross-mod noise from large collections",
+                "Whitespace-only config chunks are skipped during extraction and retrieval",
+                "Discord embed and trusted-host GIF/image link vision input in server chat, replies, and DMs",
+                "Server text requires Jenny's actual name or direct bot mention; fuzzy voice wake-word guesses are not used",
+                "Selectable activity periods for /serverinfo and /user, including total connected voice-channel time",
+                "Voice presence tracking starts when installed; restart downtime is excluded from reported totals",
+                "Natural concise chat style with less service-desk phrasing and occasional situational sarcasm",
                 "Private /health status for Discord, API, voice, RAG corpus, logs channel, and message intent",
                 "Three-button changelog pager with a page-jump number button",
             ],
@@ -1777,12 +1900,14 @@ def initialize_changelog() -> None:
                 "Preserved prior changelog entries instead of deleting them at startup",
                 "Registered the missing on_message Discord event, restoring chat responses and message logging",
                 "Added receive-event traces and clear user-visible errors for message processing failures",
+                "Use one shared complete manifest for mod roster answers and RAG summaries; ignore blank chunks",
+                "Separate strict text-name matching from tolerant Whisper wake-word matching",
                 "Verify the selected logs channel by posting a probe before saving it; include slash-command failures in audit logs",
                 "Refresh Minecraft activity every 15 seconds using a two-line Playing activity and process uptime",
             ],
             entry_type="release",
         )
-        print("[Changelog] Current release entry ensured at version 0.86")
+        print("[Changelog] Current release entry ensured at version 0.87")
     except Exception as error:
         print(f"[Changelog] Error initializing changelog: {error}")
 
@@ -1811,3 +1936,4 @@ def get_latest_changelog() -> Optional[Dict[str, Any]]:
             "type": row["type"]
         }
     return None
+

@@ -27,6 +27,7 @@ _JENNY_WAKE_WORD = re.compile(
     r"\b(?:jenny(?:\s*belle)?|jenni|jennie|jeni|chani|china|shani|sha[a]?ni|jennybell)\b",
     re.IGNORECASE,
 )
+_JENNY_TEXT_NAME = re.compile(r"\b(?:jenny(?:\s+belle)?|jennybell)\b", re.IGNORECASE)
 
 # Pattern for detecting NEED_SEARCH commands
 NEED_SEARCH_PATTERN: re.Pattern = re.compile(r"NEED_SEARCH\s*:\s*(.+)", re.IGNORECASE)
@@ -77,6 +78,11 @@ def looks_like_singing(text: str) -> bool:
 def contains_jenny_wake_word(text: str) -> bool:
     """Match Jenny and common Whisper misrecognitions without matching substrings."""
     return bool(text and _JENNY_WAKE_WORD.search(text))
+
+
+def contains_jenny_name(text: str) -> bool:
+    """Match Jenny's actual name in text without voice-transcription guesses."""
+    return bool(text and _JENNY_TEXT_NAME.search(text))
 
 
 def extract_search_query(reply: str) -> Optional[str]:
@@ -142,3 +148,4 @@ def extract_corrected_response(response: str) -> str:
                 return corrected
     
     return response
+

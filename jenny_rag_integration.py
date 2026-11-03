@@ -9,6 +9,7 @@ import hashlib
 import math
 import logging
 import os
+import re
 import threading
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -54,6 +55,7 @@ class JennyRAGSystem:
         self.chroma_client: Optional["chromadb.PersistentClient"] = None
         self.collection: Optional["chromadb.Collection"] = None
         self.modpack_summary: str = ""
+        self.mod_manifest: List[Dict[str, Any]] = []
         self.manifest_path = self.embeddings_path / "rag_manifest.json"
 
     def load_documents(self):
@@ -87,15 +89,30 @@ class JennyRAGSystem:
         """
         logger.info("Creating modpack summary for Jenny...")
 
+        # Prefer the extraction manifest because it represents the complete
+        # installed-mod roster. The searchable corpus can contain overview
+        # documents for bundled libraries or duplicate aliases.
         mod_names = []
-        seen = set()
-        for doc in self.documents:
-            if doc['metadata'].get('document_type') != 'mod_overview':
-                continue
-            display_name = doc['metadata'].get('display_name', doc['metadata'].get('mod_id', 'unknown'))
-            if display_name not in seen:
-                seen.add(display_name)
-                mod_names.append(display_name)
+        summary_path = self.processed_data_path.parent.parent / "modpack_summary.json"
+        try:
+            summary_data = json.loads(summary_path.read_text(encoding="utf-8"))
+            self.mod_manifest = [item for item in summary_data.get("mods", [])
+                                 if isinstance(item, dict) and item.get("display_name")]
+            mod_names = [str(item["display_name"]).strip() for item in self.mod_manifest]
+        except (OSError, json.JSONDecodeError, TypeError):
+            logger.warning("Mod manifest unavailable at %s; building the roster from indexed overview documents", summary_path)
+
+        if not mod_names:
+            seen = set()
+            for doc in self.documents:
+                metadata = doc.get("metadata", {})
+                if metadata.get("document_type") != "mod_overview":
+                    continue
+                display_name = metadata.get("display_name", metadata.get("mod_id", "unknown"))
+                if display_name not in seen:
+                    seen.add(display_name)
+                    mod_names.append(display_name)
+        mod_names = sorted(set(mod_names), key=str.casefold)
 
         summary_parts = [
             "=== MODS IN THIS PACK ===",
@@ -260,9 +277,10 @@ class JennyRAGSystem:
         # Query collection
         if self.collection is None:
             raise RuntimeError("Collection not initialized")
+        candidate_count = min(max(24, top_k * 5), self.collection.count())
         results = self.collection.query(
             query_embeddings=question_embedding,
-            n_results=min(top_k, self.collection.count()),
+            n_results=candidate_count,
             include=['documents', 'metadatas', 'distances']
         )
 
@@ -274,14 +292,70 @@ class JennyRAGSystem:
         if results['documents'] is None or len(results['documents']) == 0:
             return formatted_results
 
+        seen_text = set()
         for i in range(len(results['documents'][0])):
-            formatted_results.append({
-                'text': results['documents'][0][i] if results['documents'][0] else '',
+            text = results['documents'][0][i] if results['documents'][0] else ''
+            if not text.strip():
+                continue
+            formatted = {
+                'text': text,
                 'metadata': results['metadatas'][0][i] if results['metadatas'] and results['metadatas'][0] else {},
                 'distance': results['distances'][0][i] if results['distances'] and results['distances'][0] else 0.0
-            })
+            }
+            if text not in seen_text:
+                formatted_results.append(formatted)
+                seen_text.add(text)
 
-        return formatted_results
+        # Exact local names supplement semantic neighbors so common mods do not
+        # crowd out an item or config name that embeddings score less highly.
+        normalized_question = re.sub(r"[^a-z0-9]+", " ", question.casefold()).strip()
+        mod_overview_requested = bool(re.search(
+            r"\b(?:mod|modpack|what does|what is|tell me about|explain|describe|adds?)\b",
+            question, re.IGNORECASE,
+        ))
+        explicitly_scoped_mod_question = mod_overview_requested or bool(re.search(
+            r"\b(?:in|from|for|with)\s+", question, re.IGNORECASE,
+        ))
+        mentioned_mod_ids = set()
+        padded_question = f" {normalized_question} "
+        if explicitly_scoped_mod_question:
+            for mod in self.mod_manifest:
+                mod_id = str(mod.get("mod_id", "")).casefold().strip()
+                display_name = re.sub(r"[^a-z0-9]+", " ", str(mod.get("display_name", "")).casefold()).strip()
+                if ((len(display_name) >= 3 and display_name in normalized_question) or
+                        (len(mod_id) >= 3 and f" {mod_id} " in padded_question)):
+                    mentioned_mod_ids.add(mod_id)
+        exact_matches = []
+        if len(normalized_question) >= 3:
+            for doc in self.documents:
+                metadata = doc.get("metadata", {})
+                fields = ["item_name", "item_key", "result_item", "source_path", "source_file"]
+                if metadata.get("document_type") == "mod_overview" and mod_overview_requested:
+                    fields.append("display_name")
+                for field in fields:
+                    value = metadata.get(field)
+                    if not isinstance(value, str) or not value.strip():
+                        continue
+                    normalized_value = re.sub(r"[^a-z0-9]+", " ", value.casefold()).strip()
+                    # Avoid matching one-letter/two-letter filenames or IDs
+                    # against ordinary words in a question.
+                    if len(normalized_value) >= 3 and normalized_value in normalized_question:
+                        text = str(doc.get("text", ""))
+                        if not text.strip():
+                            continue
+                        if text not in seen_text:
+                            exact_matches.append({"text": text, "metadata": metadata, "distance": 0.0})
+                            seen_text.add(text)
+                        break
+        if mentioned_mod_ids:
+            # Large mods (notably Create and Create Deco) have far more chunks
+            # than smaller mods. When the user names a mod, keep nearby vector
+            # results within that explicitly requested scope.
+            exact_matches = [item for item in exact_matches
+                             if str(item["metadata"].get("mod_id", "")).casefold() in mentioned_mod_ids]
+            formatted_results = [item for item in formatted_results
+                                 if str(item["metadata"].get("mod_id", "")).casefold() in mentioned_mod_ids]
+        return (exact_matches + formatted_results)[:max(top_k, 10)]
 
     def get_modpack_context(self) -> str:
         """Get the compact modpack name summary."""
@@ -291,6 +365,15 @@ class JennyRAGSystem:
 
     def get_rag_context(self, question: str, top_k: int = 6) -> str:
         """Get RAG context for a specific question"""
+        # Roster questions need all mods. Semantic top-k search is not a list
+        # operation and otherwise returns whichever names happen to rank first.
+        if re.search(
+            r"\b(?:what|which)\s+mods?\b.{0,90}\b(?:jenny\s+)?(?:currently\s+)?(?:playing|using|running|installed|have|available|in (?:the )?pack|in your database)\b|"
+            r"\b(?:list|show|name|tell me)\b.{0,24}\bmods?\b",
+            question, re.IGNORECASE,
+        ):
+            return self.get_modpack_context()
+
         results = self.query(question, top_k=top_k)
 
         if not results:
@@ -414,3 +497,4 @@ if __name__ == "__main__":
     context = rag.get_rag_context(test_question)
     print(f"Question: {test_question}")
     print(f"Context: {context[:500]}")  # Print first 500 chars
+

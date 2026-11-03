@@ -8,6 +8,7 @@ import requests
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Mapping
+from urllib.parse import urljoin, urlparse
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
@@ -301,19 +302,42 @@ async def transcribe_audio_attachment(data: bytes, filename: str, content_type: 
 async def _prepare_image_items(image_url: str) -> List[Dict[str, Any]]:
     """Prepare image URLs for vision; animated images become ordered sampled frames."""
     def download() -> Optional[tuple[bytes, str]]:
+        # Only fetch Discord uploads/previews and known GIF CDN hosts. Validate
+        # each redirect separately so a crafted link cannot reach local/private
+        # services through an open redirect.
+        allowed_hosts = ("discordapp.com", "discordapp.net", "tenor.com", "tenor.co", "giphy.com")
+        current_url = image_url
         try:
-            response = requests.get(image_url, timeout=15, stream=True)
-            response.raise_for_status()
-            size = 0
-            chunks = []
-            for chunk in response.iter_content(64 * 1024):
-                if not chunk:
-                    continue
-                size += len(chunk)
-                if size > 20 * 1024 * 1024:
+            for _ in range(5):
+                parsed = urlparse(current_url)
+                host = (parsed.hostname or "").lower()
+                if parsed.scheme != "https" or not any(host == suffix or host.endswith("." + suffix) for suffix in allowed_hosts):
+                    print(f"[Vision] Rejected image URL outside trusted media hosts: {host or 'invalid URL'}")
                     return None
-                chunks.append(chunk)
-            return b"".join(chunks), response.headers.get("content-type", "")
+                response = requests.get(current_url, timeout=15, stream=True, allow_redirects=False)
+                if response.is_redirect:
+                    location = response.headers.get("location")
+                    response.close()
+                    if not location:
+                        return None
+                    current_url = urljoin(current_url, location)
+                    continue
+                response.raise_for_status()
+                size = 0
+                chunks = []
+                for chunk in response.iter_content(64 * 1024):
+                    if not chunk:
+                        continue
+                    size += len(chunk)
+                    if size > 20 * 1024 * 1024:
+                        response.close()
+                        return None
+                    chunks.append(chunk)
+                content_type = response.headers.get("content-type", "")
+                response.close()
+                return b"".join(chunks), content_type
+            print("[Vision] Image URL exceeded the safe redirect limit")
+            return None
         except requests.RequestException as error:
             print(f"[Vision] Could not load image: {error}")
             return None
@@ -349,3 +373,4 @@ async def _prepare_image_items(image_url: str) -> List[Dict[str, Any]]:
     except Exception as error:
         print(f"[Vision] Animation sampling unavailable ({content_type}): {error}")
     return [{"type": "image_url", "image_url": {"url": image_url}}]
+

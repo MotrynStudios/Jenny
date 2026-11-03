@@ -378,7 +378,12 @@ class ModpackDataProcessor:
         chunked_documents = []
         
         for doc in documents:
-            text = doc.text
+            text = doc.text or ""
+            # Some configs end with a newline that used to create a final
+            # whitespace-only chunk. Empty chunks consume vector slots but can
+            # never provide useful evidence.
+            if not text.strip():
+                continue
             if len(text) <= max_chunk_size:
                 chunked_documents.append(doc)
                 continue
@@ -392,11 +397,11 @@ class ModpackDataProcessor:
                 if len(current_chunk) + len(line) + 1 <= max_chunk_size:
                     current_chunk += line + '\n'
                 else:
-                    if current_chunk:
+                    if current_chunk and current_chunk.strip():
                         chunks.append(current_chunk.strip())
                     current_chunk = line + '\n'
             
-            if current_chunk:
+            if current_chunk and current_chunk.strip():
                 chunks.append(current_chunk.strip())
             
             # Create chunked documents
@@ -528,3 +533,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

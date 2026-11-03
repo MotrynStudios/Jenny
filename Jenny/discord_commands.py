@@ -1,6 +1,7 @@
 import asyncio
 import json
 import random
+import re
 from pathlib import Path
 import discord
 from discord import app_commands
@@ -31,12 +32,14 @@ from database import (
     get_recent_channel_messages,
     get_recent_voice_chat,
     get_server_activity_stats,
+    get_voice_session_time,
 )
 from utils import sanitize_final_reply
 
 # API configuration
 PYTHON_API_URL = "http://127.0.0.1:8000"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DM_COMMANDS = {"help", "changelog", "health", "mods", "trivia", "mymemory", "forgetmydata", "myusage"}
 
 
 def _read_pack_mods():
@@ -49,6 +52,45 @@ def _read_pack_mods():
     except (OSError, json.JSONDecodeError, TypeError) as error:
         print(f"[PACK] Could not read local mod list at {summary_path}: {error}")
         return []
+
+
+def make_mod_list_embed(page: Optional[int] = None) -> Optional[discord.Embed]:
+    """Build a complete pack roster or one browsable page from local metadata."""
+    all_mods = sorted(_read_pack_mods(), key=lambda item: str(item["display_name"]).casefold())
+    if not all_mods:
+        return None
+    embed = discord.Embed(color=discord.Color.blurple())
+    if page is None:
+        names = [str(item["display_name"]) for item in all_mods]
+        description = "\n".join(f"• {name}" for name in names)
+        embed.title = f"Mods in this pack · {len(names)}"
+        embed.description = description[:4000]
+        if len(description) > 4000:
+            embed.set_footer(text="The full roster is available through /mods pages.")
+        return embed
+
+    total_pages = (len(all_mods) + 19) // 20
+    start = (page - 1) * 20
+    if start >= len(all_mods):
+        return None
+    lines = []
+    for item in all_mods[start:start + 20]:
+        description = str(item.get("description") or "No description in local metadata.").strip()
+        lines.append(f"**{item['display_name']}** · {description[:220]}")
+    embed.title = "Mods in this pack"
+    embed.description = "\n".join(lines)[:4000]
+    embed.set_footer(text=f"Page {page} of {total_pages} · {len(all_mods)} mods in local metadata")
+    return embed
+
+
+def is_pack_list_request(text: str) -> bool:
+    """Recognize full-pack roster questions without hijacking mod detail questions."""
+    return bool(re.search(
+        r"\b(?:list|show|name|tell me)\b.{0,24}\b(?:mods?|modpacks?|packs?|configs?)\b|"
+        r"\b(?:what|which)\s+(?:mods?|modpacks?|packs?|configs?)\b.{0,70}\b(?:do you have|have you got|currently|playing|using|running|installed|available|included|in (?:the )?pack|in your database)\b|"
+        r"\bwhat\s+mods?\s+(?:are\s+)?(?:in|included)\b",
+        text, re.IGNORECASE
+    ))
 
 
 class ChangelogPageView(discord.ui.View):
@@ -167,6 +209,65 @@ class TriviaView(discord.ui.View):
         embed.set_footer(text="Question generated from this server's local modpack summary")
         self.select.disabled = True
         await interaction.response.edit_message(embed=embed, view=self)
+
+
+class ActivityPeriodView(discord.ui.View):
+    """Show one activity window at a time from three period buttons."""
+    def __init__(self, base_embed: discord.Embed, guild_id: int, owner_id: int,
+                 user_id: Optional[int] = None):
+        super().__init__(timeout=300)
+        self.base_embed = base_embed
+        self.guild_id = guild_id
+        self.owner_id = owner_id
+        self.user_id = user_id
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("Run this command to open your own activity view.", ephemeral=True)
+            return False
+        return True
+
+    async def show_period(self, interaction: discord.Interaction, days: int, label: str):
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        activity = get_server_activity_stats(str(self.guild_id), since,
+                                             str(self.user_id) if self.user_id else None)
+        connected_ms = get_voice_session_time(str(self.guild_id), since,
+                                              str(self.user_id) if self.user_id else None)
+        embed = self.base_embed.copy()
+        for index in reversed(range(len(embed.fields))):
+            if embed.fields[index].name.startswith("Activity ·"):
+                embed.remove_field(index)
+
+        if self.user_id is None:
+            value = (f"{activity['messages']:,} chat messages\n"
+                     f"{activity['voice_inputs']:,} voice inputs\n"
+                     f"{connected_ms / 3600000:.1f} member-hours connected to voice\n"
+                     f"{activity['voice_duration_ms'] / 60000:.1f} minutes of captured speech")
+            embed.add_field(name=f"Activity · {label}", value=value, inline=False)
+        else:
+            tokens = get_token_usage(str(self.guild_id), str(self.user_id), since=since, limit=1)
+            services = get_service_usage(str(self.guild_id), str(self.user_id), since=since)
+            token_total = int(tokens[0]["total_tokens"] or 0) if tokens else 0
+            speech = {str(row["service"]): int(row["duration_ms"] or 0) for row in services}
+            value = (f"{activity['messages']:,} chat messages · {token_total:,} tokens\n"
+                     f"{connected_ms / 60000:.1f} minutes connected to voice\n"
+                     f"{activity['voice_inputs']:,} voice inputs · {activity['voice_duration_ms'] / 60000:.1f} minutes captured speech\n"
+                     f"STT {speech.get('stt', 0) / 60000:.1f} min · TTS {speech.get('tts', 0) / 60000:.1f} min")
+            embed.add_field(name=f"Activity · {label}", value=value, inline=False)
+        embed.set_footer(text=f"Showing the last {label.lower()} · choose another period below")
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="24 hours", style=discord.ButtonStyle.secondary)
+    async def day_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.show_period(interaction, 1, "24 hours")
+
+    @discord.ui.button(label="7 days", style=discord.ButtonStyle.secondary)
+    async def week_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.show_period(interaction, 7, "7 days")
+
+    @discord.ui.button(label="30 days", style=discord.ButtonStyle.secondary)
+    async def month_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.show_period(interaction, 30, "30 days")
 
 
 def make_pack_trivia(owner_id: int):
@@ -378,20 +479,17 @@ def setup_commands(bot):
     @tree.command(name="mods", description="List mods found in this server's local pack data")
     @app_commands.describe(page="Page of 20 mods to show")
     async def mods(interaction: discord.Interaction, page: app_commands.Range[int, 1, 100] = 1):
-        all_mods = sorted(_read_pack_mods(), key=lambda item: str(item["display_name"]).casefold())
-        if not all_mods:
-            await interaction.response.send_message(embed=discord.Embed(title="Modpack data unavailable", description="No local mod summary was found. Place the pack's JARs in `mods/` and run `tools/rag/build_index.py`.", color=discord.Color.red()), ephemeral=True)
+        embed = make_mod_list_embed(page)
+        if embed is None:
+            if not _read_pack_mods():
+                description = "No local mod summary was found. Place the pack's JARs in `mods/` and run `tools/rag/build_index.py`."
+                title = "Modpack data unavailable"
+            else:
+                total_pages = (len(_read_pack_mods()) + 19) // 20
+                description = f"There are only {total_pages} pages."
+                title = "Page not found"
+            await interaction.response.send_message(embed=discord.Embed(title=title, description=description, color=discord.Color.red()), ephemeral=True)
             return
-        start = (page - 1) * 20
-        if start >= len(all_mods):
-            await interaction.response.send_message(f"There are only {((len(all_mods) - 1) // 20) + 1} pages.", ephemeral=True)
-            return
-        lines = []
-        for item in all_mods[start:start + 20]:
-            description = str(item.get("description") or "No description in local metadata.").strip()
-            lines.append(f"**{item['display_name']}** · {description[:220]}")
-        embed = discord.Embed(title="Mods in this pack", description="\n".join(lines)[:4000], color=discord.Color.blurple())
-        embed.set_footer(text=f"Page {page} of {((len(all_mods) - 1) // 20) + 1} · {len(all_mods)} mods in local metadata")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @tree.command(name="trivia", description="Start a quiz using installed mod descriptions")
@@ -536,12 +634,13 @@ def setup_commands(bot):
         is_admin = bool(interaction.guild and interaction.user.guild_permissions.administrator)
         visible_commands = [
             f"`/{command.name}`" for command in tree.get_commands()
-            if command.name not in admin_only or is_admin
+            if (command.name not in admin_only or is_admin)
+            and (interaction.guild is not None or command.name in DM_COMMANDS)
         ]
         embed = discord.Embed(title="Jenny's command guide", color=discord.Color.blurple())
         embed.description = (
-            "Jenny replies to every message in the configured main channel, and to mentions, replies, "
-            "or DMs elsewhere. In voice, say her name or a common Whisper variation."
+            "In servers, Jenny replies when you say her name or mention her. DMs are direct conversations. "
+            "In voice, say her name or a common Whisper variation."
         )
         embed.add_field(name="Commands available to you", value=" · ".join(visible_commands)[:1024], inline=False)
         embed.add_field(name="Modpack data", value="Put mod JARs in `mods/`, text configs in `config/`, then run `tools/rag/build_index.py`.", inline=False)
@@ -837,18 +936,9 @@ def setup_commands(bot):
         embed.add_field(name="Created", value=created)
         if guild.owner:
             embed.add_field(name="Owner", value=guild.owner.mention)
-        now = datetime.now(timezone.utc)
-        for days, label in ((1, "24 hours"), (7, "7 days"), (30, "30 days")):
-            stats = get_server_activity_stats(str(guild.id), (now - timedelta(days=days)).isoformat())
-            voice_minutes = stats["voice_duration_ms"] / 60000
-            embed.add_field(
-                name=f"Activity · {label}",
-                value=(f"{stats['messages']:,} chat messages\n"
-                       f"{stats['voice_inputs']:,} voice inputs\n"
-                       f"About {voice_minutes:.1f} minutes of captured speech"),
-                inline=True,
-            )
-        await interaction.response.send_message(embed=embed)
+        embed.set_footer(text="Choose an activity period below")
+        view = ActivityPeriodView(embed, guild.id, interaction.user.id)
+        await interaction.response.send_message(embed=embed, view=view)
 
     @tree.command(name="user", description="Show a member's profile, activity, and usage")
     @app_commands.describe(member="Member to inspect, defaults to you")
@@ -868,22 +958,9 @@ def setup_commands(bot):
         embed.add_field(name="Joined", value=discord.utils.format_dt(target.joined_at, style="D") if target.joined_at else "Unknown", inline=True)
         embed.add_field(name="Roles", value=", ".join(roles)[:1024] if roles else "None", inline=False)
 
-        now = datetime.now(timezone.utc)
-        for days, label in ((1, "24 hours"), (7, "7 days"), (30, "30 days")):
-            since = (now - timedelta(days=days)).isoformat()
-            activity = get_server_activity_stats(str(guild.id), since, str(target.id))
-            tokens = get_token_usage(str(guild.id), str(target.id), since=since, limit=1)
-            services = get_service_usage(str(guild.id), str(target.id), since=since)
-            token_total = int(tokens[0]["total_tokens"] or 0) if tokens else 0
-            speech = {str(row["service"]): int(row["duration_ms"] or 0) for row in services}
-            embed.add_field(
-                name=f"Usage · {label}",
-                value=(f"{token_total:,} tokens\n{activity['messages']:,} chat messages\n"
-                       f"{activity['voice_inputs']:,} voice inputs, about {activity['voice_duration_ms'] / 60000:.1f} min captured\n"
-                       f"STT {speech.get('stt', 0) / 60000:.1f} min · TTS {speech.get('tts', 0) / 60000:.1f} min"),
-                inline=True,
-            )
-        await interaction.response.send_message(embed=embed)
+        embed.set_footer(text="Choose an activity period below")
+        view = ActivityPeriodView(embed, guild.id, interaction.user.id, target.id)
+        await interaction.response.send_message(embed=embed, view=view)
 
     @tree.command(name="lastseen", description="Show the most recent saved message time for a member")
     @app_commands.describe(user="Member to look up")
@@ -1258,6 +1335,16 @@ def setup_commands(bot):
         await interaction.response.send_message(embed=view.make_embed(), view=view)
         view.message = await interaction.original_response()
 
+    # Explicit command contexts keep guild-only commands out of DMs and the
+    # private command picker, instead of listing unusable commands there.
+    for command in tree.get_commands():
+        can_run_in_dm = command.name in DM_COMMANDS
+        command.allowed_contexts = app_commands.AppCommandContext(
+            guild=True,
+            dm_channel=can_run_in_dm,
+            private_channel=can_run_in_dm,
+        )
+
     @tree.error
     async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
         cause = getattr(error, "original", error)
@@ -1285,3 +1372,4 @@ def setup_commands(bot):
                 await interaction.response.send_message(embed=embed, ephemeral=True)
         except discord.HTTPException as response_error:
             print(f"[COMMAND] Could not report command failure: {response_error}")
+

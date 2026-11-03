@@ -56,3 +56,4 @@ Check the stages in order:
 If indexing fails while adding a batch, inspect the first Chroma metadata validation error in `logs/jenny_rag.log`. Mod language data can contain nested arrays or objects. The indexer converts those values to JSON strings before sending them to Chroma. After updating the code, rerun the combined builder so it can rebuild the collection from the processed JSON.
 
 The `mods/`, `config/`, generated `data/`, local SQLite memory, and runtime logs are ignored by Git. They belong to each installation and should not be committed unless you intentionally publish that pack's data. The runtime adapter and voice HTTP bridge live at the repository root because the Discord application imports and runs them; this folder is for offline RAG build tools only.
+

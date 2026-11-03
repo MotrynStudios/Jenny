@@ -65,3 +65,4 @@ def configure_runtime_logging() -> None:
     sys.stdout = _TeeStream(sys.__stdout__, logger, logging.INFO)  # type: ignore[assignment]
     sys.stderr = _TeeStream(sys.__stderr__, logger, logging.ERROR)  # type: ignore[assignment]
     sys._jenny_runtime_logging_enabled = True
+

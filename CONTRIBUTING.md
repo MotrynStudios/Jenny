@@ -24,3 +24,4 @@ The current repository has syntax checks, not a comprehensive automated integrat
 ## Pull requests
 
 Keep changes focused, describe behavior visible to users, and include relevant logs or screenshots only after removing tokens, user-identifying content, and private server data. Do not submit `.env`, `memory.db`, generated `data/`, `logs/`, or Minecraft pack files.
+

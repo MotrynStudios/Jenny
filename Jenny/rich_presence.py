@@ -50,3 +50,4 @@ async def run_minecraft_presence(bot: "Bot") -> None:
             print(f"[PRESENCE] Could not update game activity: {error}")
 
         await asyncio.sleep(PRESENCE_UPDATE_INTERVAL_SECONDS)
+

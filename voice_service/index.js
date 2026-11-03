@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 23410)
+Total output lines: 2194
+
 #!/usr/bin/env node
 /**
  * Optional voice process for the same Jenny bot identity used by Python
@@ -1090,118 +1093,7 @@ async function sendToPythonAPI(userId, username, transcript, guildId, channelId,
                 } else if (responseText === 'REPLY_MODE_CHAT') {
                     replyModes.set(guildId, 'chat');
                     console.log('[Voice] Reply mode set to: Chat only');
-                } else if (responseText === 'REPLY_MODE_BOTH') {
-                    replyModes.set(guildId, 'both');
-                    console.log('[Voice] Reply mode set to: Both voice and chat');
-                } else if (responseText === 'KILLTTS') {
-                    // Stop any ongoing TTS playback
-                    console.log('[Voice] KILLTTS command received - stopping TTS');
-                    await stopTTSPlayback(guildId);
-                }
-                
-                return; // Don't process as normal response
-            }
-            
-            // Handle empty response (AI decided not to respond)
-            if (!responseText || responseText.trim() === '') {
-                console.log('[Voice] Empty response - AI decided not to respond');
-                pendingResponses.delete(guildId);
-                return;
-            }
-            
-            // Track pending response for cancellation
-            pendingResponses.set(guildId, {
-                userId,
-                transcript,
-                timestamp: Date.now()
-            });
-
-            // Handle reply mode - use the reply_mode from API response
-            const actualReplyMode = response.data.reply_mode || replyMode;
-            console.log(`[${getTimestamp()}] [Voice] Reply mode: ${actualReplyMode}`);
-
-            // Handle "none" reply mode - AI decided not to respond
-            if (actualReplyMode === 'none') {
-                console.log('[Voice] AI decided not to respond (NO_RESPONSE)');
-                pendingResponses.delete(guildId);
-                return;
-            }
-
-            const textReply = response.data.chat_message || response.data.response;
-            let sentTextReply = false;
-            let ttsWasAttempted = false;
-            const ttsStartedAt = Date.now();
-            if (actualReplyMode === 'vc' || actualReplyMode === 'both') {
-                console.log(`[${getTimestamp()}] [Voice] Voice mode requested, checking voice connection...`);
-
-                // Check if bot is in voice channel
-                if (!isInVoiceChannel(guildId)) {
-                    console.log(`[Voice] Bot not in voice channel, sending text response instead`);
-                    // Send text response as fallback
-                    const guildInfo = client.guilds.cache.get(guildId);
-                    if (guildInfo) {
-                        const textChannel = getTextChannel(guildId);
-                        if (textChannel) {
-                            await textChannel.send(textReply);
-                            sentTextReply = true;
-                        } else {
-                            console.error('[Voice] Logs channel not found');
-                        }
-                    }
-                } else {
-                    console.log(`[Voice] Bot in voice channel, generating speech...`);
-                    
-                    // Check if there are pending TTS chunks or audio currently playing
-                    const ttsState = getTTSState(guildId);
-                    if (ttsState.isGenerating || ttsState.isPlaying || (ttsState.chunks.length > 0 && ttsState.currentChunkId < ttsState.chunks.length)) {
-                        console.log(`[Voice] Skipping TTS - audio currently playing or pending chunks`);
-                        console.log(`[Voice] TTS status: isPlaying=${ttsState.isPlaying}, pendingChunks=${ttsState.chunks.length}, currentChunk=${ttsState.currentChunkId}`);
-                        // Still send text response if it's "both" mode
-                        if (actualReplyMode === 'both') {
-                            const guildInfo = client.guilds.cache.get(guildId);
-                            if (guildInfo) {
-                                const textChannel = getTextChannel(guildId);
-                                if (textChannel) {
-                                    await textChannel.send(textReply);
-                                    sentTextReply = true;
-                                }
-                            }
-                        }
-                    } else {
-                        ttsWasAttempted = true;
-                        const played = await playTTSInChunks(guildId, response.data.response, userId);
-                        if (played) {
-                            console.log(`[Voice] Audio response played in voice channel`);
-                        } else {
-                            console.log(`[Voice] Audio playback failed, sending text response`);
-                            // Fallback to text if audio fails
-                            const guildInfo = client.guilds.cache.get(guildId);
-                            if (guildInfo) {
-                                const textChannel = getTextChannel(guildId);
-                                if (textChannel) {
-                                    await textChannel.send(textReply);
-                                    sentTextReply = true;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            
-            if (ttsWasAttempted) {
-                try {
-                    await axios.post(`${PYTHON_API_URL}/voice/turn/timing`, {
-                        guild_id: guildId,
-                        user_id: userId,
-                        username,
-                        transcript,
-                        timings_ms: {
-                            python_api: timingsMs.python_api || 0,
-                            tts_generation_and_playback: Date.now() - ttsStartedAt
-                        }
-                    }, { timeout: 2000 });
-                } catch (timingError) {
-                    console.warn(`[Voice] Could not save TTS timing: ${timingError.message}`);
+                } else if (responseText === 'REPLY_MO…1410 tokens truncated…                  console.warn(`[Voice] Could not save TTS timing: ${timingError.message}`);
                 }
             }
 
@@ -2191,3 +2083,4 @@ setInterval(async () => {
 
 // Login
 client.login(DISCORD_TOKEN);
+

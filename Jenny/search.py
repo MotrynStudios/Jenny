@@ -69,3 +69,4 @@ async def perform_search(query, max_results=3):
 
     print("[SEARCH] All Tavily keys failed")
     return None
+
