@@ -1,5 +1,13 @@
 # Jenny changelog
 
+## 0.83
+
+### Fixed and improved
+
+- Fixed mod metadata extraction for TOML dependency array tables and author arrays, so valid mods such as YetAnotherConfigLib no longer get skipped.
+- Normalized nested mod language metadata before ChromaDB indexing, preventing a malformed metadata value from aborting an entire vector batch.
+- Updated project documentation to explain runtime module placement, the full RAG build flow, cross-context personal memory, and empty-index troubleshooting.
+
 ## 0.82
 
 ### Added and improved

@@ -46,6 +46,12 @@ def main() -> int:
         )
         if not rag.load_documents():
             raise RuntimeError(f"Processed documents were not created at {rag.processed_data_path}")
+        if not rag.documents:
+            raise RuntimeError(
+                f"Processed corpus is empty at {rag.processed_data_path}; "
+                "check the mods/config paths and processing.log before building ChromaDB"
+            )
+        print(f"Loaded {len(rag.documents)} processed evidence documents")
         summary = rag.create_modpack_summary()
         summary_path = output / "processed" / "modpack_summary.txt"
         summary_path.write_text(summary, encoding="utf-8")
@@ -53,8 +59,8 @@ def main() -> int:
         print(f"\nIndex ready: {rag.collection.count() if rag.collection else 0} evidence documents")
         print(f"Mod list summary: {summary_path}")
         return 0
-    except (subprocess.CalledProcessError, OSError, RuntimeError) as error:
-        print(f"RAG build failed: {error}", file=sys.stderr)
+    except Exception as error:
+        print(f"RAG build failed: {type(error).__name__}: {error}", file=sys.stderr)
         return 1
 
 

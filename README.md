@@ -1,10 +1,10 @@
 # Jenny Discord Bot
 
-Jenny is a multi-server Discord bot with persistent chat context, searchable server history, Minecraft mod and config retrieval, image/GIF analysis, and an optional voice companion service. Guild settings, profile records, usage totals, and server conversation context are scoped by Discord server; private DM memory is scoped to the individual user.
+Jenny is a multi-server Discord bot with persistent chat context, searchable server history, Minecraft mod and config retrieval, image/GIF analysis, and an optional voice companion service. Guild settings, profiles, usage totals, and channel memories stay scoped to their server. A person's long-term memory follows their stable Discord user ID across DMs, server text, and voice, while short conversation histories remain separate by conversation.
 
 > **License status:** This project does not yet include a license. Until its owner selects one, GitHub visitors can view the code but do not have an explicit license grant to reuse or redistribute it.
 
-The bot is designed to ground claims about a server's installed Minecraft pack in that server owner's indexed files. When local evidence is missing, Jenny can use web search for background and must label it as external rather than treating it as proof of the installed pack. This reduces unsupported claims; no language model can guarantee zero hallucinations, so review high impact answers and tune retrieval against your own files.
+The bot grounds Minecraft claims in the local mod/config corpus configured for that Jenny installation. At present, one installation has one shared RAG index for every Discord server it serves. If different servers use different modpacks, run separate bot installations or keep that limitation in mind; per-guild indexes are not implemented yet. When local evidence is missing, Jenny can use web search for background and labels it as external rather than treating it as proof of the installed pack. This reduces unsupported claims; no language model can guarantee zero hallucinations, so review high impact answers and tune retrieval against your own files.
 
 ## Requirements
 
@@ -59,14 +59,14 @@ For voice replies with multiple sentences, Jenny starts playing the first senten
 Place the Minecraft instance's `mods/` and `config/` folders beside this repository, or pass their paths to the builder. The one-time extraction and indexing pipeline is kept under `tools/rag`:
 
 ```powershell
-python tools/rag/build_index.py --mods-dir .\mods --config-dir .\config
+   .\.venv\Scripts\python.exe tools\rag\build_index.py --mods-dir .\mods --config-dir .\config
 ```
 
-The pipeline extracts mod metadata, recipes and other bundled data, reads supported config formats, redacts common secret-like values, creates searchable documents, and builds the local vector index under `data/`. Generated indexes and extracted data are local runtime artifacts and are ignored by Git. Re-run the builder after changing mods/configs. Do not publish a pack's private configuration or credentials.
+The builder runs all three stages in order: JAR/config extraction, searchable document generation, then ChromaDB embedding/index creation. Running `extract_modpack_data.py` by itself only completes the first stage, so it does not create `data/processed/all_documents.json` or populate ChromaDB. Generated indexes and extracted data are local runtime artifacts and are ignored by Git. Re-run the builder after changing mods/configs. Do not publish a pack's private configuration or credentials.
 
 Supported config formats include TOML, JSON/JSON5, YAML, properties, CFG, CONF, INI, SNBT, and TXT. Unsupported formats are skipped. Files larger than the extraction limit are skipped. Treat any redaction as best-effort and review extracted output before sharing it.
 
-See [tools/rag/README.md](tools/rag/README.md) for the exact expected folder layout, supported extensions, extraction boundaries, and build command. The startup warning `all_documents.json` not found means the one-time builder has not successfully generated the expected processed corpus yet.
+See [tools/rag/README.md](tools/rag/README.md) for the exact expected folder layout, supported extensions, extraction boundaries, build command, and troubleshooting. The startup warning `all_documents.json` not found means the processing stage did not produce the corpus in the bot's `data/processed` folder. A `chroma.sqlite3` file alone does not prove that it contains vectors; check the builder's final document count and generated `data/embeddings/rag_manifest.json`.
 
 Jenny cites retrieved evidence sources in modpack answers. `RAG_MAX_DISTANCE` controls which vector matches count as evidence: lower values are stricter, but may miss relevant material. Tune it with representative questions. If no local evidence qualifies, the answer should say what is unknown; web results are supplementary context only.
 
@@ -98,7 +98,7 @@ Server text summaries are scoped to their text channel; voice summaries are scop
 
 The default 90-day cleanup removes old detailed message, voice, usage, profile-history, image-context, and short conversation-history records. Rolling summaries are retained until the user clears their memory with `/forgetmydata` or an administrator clears their history. This lets Jenny remember useful context without keeping every raw conversation indefinitely.
 
-See [CHANGELOG.md](CHANGELOG.md) for Jenny's current 0.82 feature list. Discord does not expose members' private profile bios through the bot API.
+See [CHANGELOG.md](CHANGELOG.md) for Jenny's current 0.83 feature list. Discord does not expose members' private profile bios through the bot API.
 
 Memory and searchable logs are stored locally in SQLite (`Jenny/memory.db`). They are not shared across installations. Users with access to the host can access that database, so apply appropriate filesystem and backup controls.
 
@@ -113,10 +113,13 @@ Memory and searchable logs are stored locally in SQLite (`Jenny/memory.db`). The
 ## Project layout
 
 ```text
-Jenny/                 Discord bot, prompt building, SQLite memory, commands
-tools/rag/             One-time mod/config extraction and index builder
-voice_service/         Optional Discord voice capture and speech service
-jenny_api_server.py    Local Python/voice bridge
-jenny_rag_integration.py  Retrieval and source-grounded evidence formatting
-requirements.txt       Python dependencies
+Jenny/                    Discord bot, prompts, SQLite memory, and commands
+tools/rag/                One-time mod/config extraction, processing, and index build tools
+voice_service/            Optional Node voice capture, transcription, and speech playback
+jenny_api_server.py       Always-running local HTTP bridge used by the voice process
+jenny_rag_integration.py  Runtime retrieval adapter imported by the Discord bot
+data/                     Local extracted documents and ChromaDB index, generated per installation
+requirements.txt          Python dependencies
 ```
+
+The two root-level Python modules are runtime components, not extraction tools. `jenny_api_server.py` connects the optional Node voice process to the already-running Python bot, and `jenny_rag_integration.py` is imported by the bot for live retrieval. The `tools/rag/` folder contains commands that an owner runs to build or refresh local modpack data.

@@ -5,7 +5,7 @@ Thanks for helping improve Jenny. Contributions should keep the bot usable acros
 ## Before opening a change
 
 - Search existing commands and helpers before adding another implementation of the same behavior.
-- Keep Discord server data scoped by guild and private conversation data scoped by user.
+- Keep guild settings and channel memory scoped by guild. Personal long-term memory is keyed by stable Discord user ID and shared across that user's DMs, server text, and voice; raw short-term histories remain scoped to their conversation.
 - Keep credentials, `.env` files, local databases, logs, generated indexes, mod JARs, and private config files out of commits.
 - Update `README.md` when setup, supported providers, data formats, permissions, or user-facing behavior changes. Update `CHANGELOG.md` for user-visible changes.
 - Explain what you changed, how you checked it, and any setup or migration steps.
