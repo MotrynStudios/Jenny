@@ -16,9 +16,11 @@ from typing import List, Dict, Any, Optional
 import chromadb
 from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
+from dotenv import load_dotenv
 
 # Set up logging with absolute path
 script_dir = Path(__file__).resolve().parent
+load_dotenv(script_dir / ".env")
 logs_dir = script_dir / "logs"
 logs_dir.mkdir(exist_ok=True)
 
@@ -131,6 +133,23 @@ class JennyRAGSystem:
         if self.embedding_model is not None:
             logger.info("Embedding model already initialized")
             return
+        # SentenceTransformers/PyTorch otherwise create workers for every
+        # logical CPU core. Keep indexing responsive on laptops without
+        # changing the encoder, vectors, or retrieval quality.
+        try:
+            import torch
+            requested_threads = max(1, int(os.getenv("RAG_CPU_THREADS", "2")))
+            cpu_threads = min(requested_threads, os.cpu_count() or requested_threads)
+            torch.set_num_threads(cpu_threads)
+            try:
+                torch.set_num_interop_threads(cpu_threads)
+            except RuntimeError:
+                # PyTorch only permits changing inter-op threads before any
+                # parallel work. The intra-op cap above still takes effect.
+                logger.debug("PyTorch inter-op thread limit was already initialized")
+            logger.info("Embedding CPU thread limit: %s", cpu_threads)
+        except (ImportError, ValueError, RuntimeError) as error:
+            logger.warning("Could not apply RAG CPU thread limit: %s", error)
         logger.info("Initializing embedding model...")
         self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
         logger.info("Embedding model initialized")
@@ -193,7 +212,9 @@ class JennyRAGSystem:
             self.initialize_embedding_model()
 
         # Process documents in batches
-        batch_size = 100
+        batch_size = max(1, min(int(os.getenv("RAG_INDEX_BATCH_SIZE", "64")), 256))
+        embedding_batch_size = max(1, min(int(os.getenv("RAG_EMBED_BATCH_SIZE", "16")), 128))
+        logger.info("Index batch size: %s; embedding batch size: %s", batch_size, embedding_batch_size)
         ids_seen = set()
         normalized_documents = []
         for index, doc in enumerate(self.documents):
@@ -222,7 +243,7 @@ class JennyRAGSystem:
                 self.initialize_embedding_model()
             if self.embedding_model is None:
                 raise RuntimeError("Failed to initialize embedding model")
-            embeddings = self.embedding_model.encode(texts).tolist()
+            embeddings = self.embedding_model.encode(texts, batch_size=embedding_batch_size).tolist()
 
             # Add to collection
             if self.collection is None:

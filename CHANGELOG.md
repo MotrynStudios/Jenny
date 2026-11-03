@@ -1,5 +1,11 @@
 # Jenny changelog
 
+## 0.92
+
+### Improved
+
+- Capped local RAG embedding threads and reduced indexing batch sizes to keep rebuilds more responsive on laptops without changing retrieval quality.
+
 ## 0.91
 
 ### Fixed

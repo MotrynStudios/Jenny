@@ -89,6 +89,8 @@ Jenny cites retrieved evidence sources in modpack answers. `RAG_MAX_DISTANCE` co
 
 At runtime, vector retrieval is limited to Minecraft/mod/config questions and short follow-ups to recent related turns. The heavy RAG and embedding modules load only when needed, reducing normal startup time and idle memory use. The first RAG query may take longer while the local embedding model initializes. Set `RAG_PREWARM=true` in `.env` to trade startup-time resource use for a warmer first query. Shared server chat logs are added for explicit history questions and a small nearby-message slice is added for short, context-dependent follow-ups.
 
+The one-time local index build embeds every extracted document on the machine. To keep that work from saturating a laptop, the defaults cap PyTorch at 2 CPU threads and use 64-document Chroma batches with 16-text embedding batches. Set `RAG_CPU_THREADS`, `RAG_INDEX_BATCH_SIZE`, and `RAG_EMBED_BATCH_SIZE` in `.env` to tune peak resource use; the thread and batch settings affect build speed and memory, not embedding quality. Rebuilding is only needed after changing the mod/config corpus or extraction code.
+
 ## What the bot can do
 
 - Reply in servers only when Jenny's name or bot account is mentioned; replies to other users and ordinary main-channel messages do not trigger her. Every DM is treated as a direct conversation.

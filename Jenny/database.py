@@ -2061,20 +2061,17 @@ def initialize_changelog() -> None:
     """Ensure the current public release entry exists without deleting history."""
     try:
         add_changelog_entry(
-            version="0.91",
-            description="Fixed memory attribution and trivia parsing; improved RAG coverage, startup, and command consistency",
+            version="0.92",
+            description="Reduced peak CPU and memory use during local RAG index builds",
             features=[
-                "Name-resolved role changes with conflict checks; paged embeds and unified activity ranges",
-                "Legacy/custom mod data extraction and texture/model asset references",
-                "Gemini-first memory maintenance with readable participant names",
+                "RAG indexing defaults to two CPU threads and smaller batches without changing retrieval quality",
             ],
             changes=[
-                "Excluded Jenny's replies, duplicate scopes, and malformed IDs from user memory",
-                "Stopped unrelated chat copies in configured logs; made RAG prewarming opt-in",
+                "Added RAG_CPU_THREADS, RAG_INDEX_BATCH_SIZE, and RAG_EMBED_BATCH_SIZE tuning settings",
             ],
             entry_type="release",
         )
-        print("[Changelog] Current release entry ensured at version 0.91")
+        print("[Changelog] Current release entry ensured at version 0.92")
     except Exception as error:
         print(f"[Changelog] Error initializing changelog: {error}")
 

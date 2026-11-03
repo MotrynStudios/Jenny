@@ -54,6 +54,10 @@ Run the combined builder from the repository root so extraction, document proces
 
 On macOS or Linux, use `./.venv/bin/python tools/rag/build_index.py --mods-dir ./mods --config-dir ./config`. Running `extract_modpack_data.py` alone only creates `data/raw_data/`; it does not create the processed corpus or embeddings. `process_for_rag.py` alone creates `all_documents.json` but does not populate ChromaDB.
 
+## Build resource use
+
+Indexing runs the local sentence-transformer model over every evidence document. A changed corpus fingerprint triggers a full vector-index rebuild, even when only some documents changed. Defaults limit PyTorch to 2 CPU threads, use 64-document Chroma batches, and embed 16 texts at a time. Configure `RAG_CPU_THREADS`, `RAG_INDEX_BATCH_SIZE`, and `RAG_EMBED_BATCH_SIZE` in `.env` to trade build speed for lower peak CPU and memory use. These settings do not change the embedding model or answer quality. Keep the current build running when possible; stopping midway leaves an incomplete generated index that must be rebuilt.
+
 ## Troubleshooting an empty index
 
 Check the stages in order:
