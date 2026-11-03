@@ -29,6 +29,9 @@ def _format_elapsed(seconds: float) -> str:
 
 async def run_minecraft_presence(bot: "Bot") -> None:
     """Set and periodically refresh Jenny's Minecraft singleplayer activity."""
+    # Wait for the gateway to settle after READY. discord.py cautions against
+    # changing presence immediately during on_ready because it can reconnect.
+    await asyncio.sleep(5)
     while not bot.is_closed():
         elapsed = time.monotonic() - _PROCESS_STARTED_MONOTONIC
         elapsed_text = _format_elapsed(elapsed)

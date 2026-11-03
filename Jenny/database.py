@@ -1738,8 +1738,8 @@ def initialize_changelog() -> None:
     """Ensure the current public release entry exists without deleting history."""
     try:
         add_changelog_entry(
-            version="0.84",
-            description="Jenny 0.84 character, server role context, and live activity",
+            version="0.85",
+            description="Jenny 0.85 character, server role context, and live activity",
             features=[
                 "Conversational chat in the configured main channel, direct messages, and server mentions or replies",
                 "Voice conversations with speech recognition, spoken replies, and chat, voice, or both reply modes",
@@ -1775,7 +1775,7 @@ def initialize_changelog() -> None:
             ],
             entry_type="release",
         )
-        print("[Changelog] Current release entry ensured at version 0.84")
+        print("[Changelog] Current release entry ensured at version 0.85")
     except Exception as error:
         print(f"[Changelog] Error initializing changelog: {error}")
 

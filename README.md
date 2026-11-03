@@ -102,7 +102,7 @@ Server text summaries are scoped to their text channel; voice summaries are scop
 
 The default 90-day cleanup removes old detailed message, voice, usage, profile-history, image-context, and short conversation-history records. Rolling summaries are retained until the user clears their memory with `/forgetmydata` or an administrator clears their history. This lets Jenny remember useful context without keeping every raw conversation indefinitely.
 
-See [CHANGELOG.md](CHANGELOG.md) for Jenny's current 0.84 feature list. Discord does not expose members' private profile bios through the bot API.
+See [CHANGELOG.md](CHANGELOG.md) for Jenny's current 0.85 feature list. Discord does not expose members' private profile bios through the bot API.
 
 The activity is a bot-supported Playing status, not the full Rich Presence integration available to desktop games. The elapsed time is shown as text and advances once per minute.
 

@@ -1,5 +1,11 @@
 # Jenny changelog
 
+## 0.85
+
+### Fixed
+
+- Delayed the initial game activity update until Discord's gateway settles after login, reducing the risk of reconnects during startup.
+
 ## 0.84
 
 ### Added and improved

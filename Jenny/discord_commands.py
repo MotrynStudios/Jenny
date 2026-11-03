@@ -1024,7 +1024,7 @@ def setup_commands(bot):
         
         embed = discord.Embed(
             title="📜 Jenny Changelog",
-            description="Complete public feature list for Jenny 0.84",
+            description="Complete public feature list for Jenny 0.85",
             color=discord.Color.blue()
         )
 
