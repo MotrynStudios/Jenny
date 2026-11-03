@@ -1,4 +1,7 @@
 import asyncio
+import json
+import random
+from pathlib import Path
 import discord
 from discord import app_commands
 import requests
@@ -33,6 +36,151 @@ from utils import sanitize_final_reply
 
 # API configuration
 PYTHON_API_URL = "http://127.0.0.1:8000"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _read_pack_mods():
+    """Load only the locally extracted mod list used by pack-grounded tools."""
+    summary_path = PROJECT_ROOT / "data" / "modpack_summary.json"
+    try:
+        data = json.loads(summary_path.read_text(encoding="utf-8"))
+        mods = data.get("mods", [])
+        return [item for item in mods if isinstance(item, dict) and item.get("display_name")]
+    except (OSError, json.JSONDecodeError, TypeError) as error:
+        print(f"[PACK] Could not read local mod list at {summary_path}: {error}")
+        return []
+
+
+class ChangelogPageView(discord.ui.View):
+    """Three-button history pager; the center button opens a page jump modal."""
+    def __init__(self, entries, owner_id: int, page: int = 0):
+        super().__init__(timeout=180)
+        self.entries = entries
+        self.owner_id = owner_id
+        self.page = page
+        self.message = None
+        self.previous.label = "Back"
+        self.page_button.label = f"{page + 1}/{len(entries)}"
+        self.next.label = "Next"
+        self.previous.disabled = page <= 0
+        self.next.disabled = page >= len(entries) - 1
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("Run /changelog to open your own history pager.", ephemeral=True)
+            return False
+        return True
+
+    def make_embed(self):
+        entry = self.entries[self.page]
+        embed = discord.Embed(title=f"Jenny changelog · v{entry['version']}",
+                              description=entry.get("description") or "Release notes",
+                              color=discord.Color.blurple())
+        for title, key in (("Jenny can", "features"), ("Changes", "changes")):
+            values = entry.get(key, [])
+            if isinstance(values, str):
+                values = [values]
+            lines, batch, batch_size = [], [], 0
+            for value in values:
+                line = f"• {value}"
+                if batch and batch_size + len(line) + 1 > 1000:
+                    lines.append("\n".join(batch))
+                    batch, batch_size = [], 0
+                batch.append(line[:1000])
+                batch_size += len(line) + 1
+            if batch:
+                lines.append("\n".join(batch))
+            for index, text in enumerate(lines or ["No entries."]):
+                embed.add_field(name=title if index == 0 else f"{title} (continued)", value=text[:1024], inline=False)
+        embed.set_footer(text=f"{entry.get('type', 'release').title()} · {entry.get('date', 'date unavailable')}")
+        return embed
+
+    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary)
+    async def previous(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page = max(0, self.page - 1)
+        self._refresh()
+        await interaction.response.edit_message(embed=self.make_embed(), view=self)
+
+    @discord.ui.button(label="1/1", style=discord.ButtonStyle.primary)
+    async def page_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(ChangelogJumpModal(self))
+
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.secondary)
+    async def next(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page = min(len(self.entries) - 1, self.page + 1)
+        self._refresh()
+        await interaction.response.edit_message(embed=self.make_embed(), view=self)
+
+    def _refresh(self):
+        self.previous.disabled = self.page <= 0
+        self.page_button.label = f"{self.page + 1}/{len(self.entries)}"
+        self.next.disabled = self.page >= len(self.entries) - 1
+
+
+class ChangelogJumpModal(discord.ui.Modal, title="Go to changelog page"):
+    page_number = discord.ui.TextInput(label="Page number", placeholder="1", max_length=6)
+
+    def __init__(self, view: ChangelogPageView):
+        super().__init__()
+        self.pager = view
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            requested = int(str(self.page_number.value).strip())
+        except ValueError:
+            await interaction.response.send_message("Enter a whole page number.", ephemeral=True)
+            return
+        if requested < 1 or requested > len(self.pager.entries):
+            await interaction.response.send_message(f"Choose a page from 1 to {len(self.pager.entries)}.", ephemeral=True)
+            return
+        self.pager.page = requested - 1
+        self.pager._refresh()
+        await interaction.response.defer()
+        if self.pager.message is not None:
+            await self.pager.message.edit(embed=self.pager.make_embed(), view=self.pager)
+
+
+class TriviaView(discord.ui.View):
+    """A locally grounded mod-description quiz with four selectable answers."""
+    def __init__(self, question: str, answer: str, options: list[str], owner_id: int):
+        super().__init__(timeout=90)
+        self.answer = answer
+        self.owner_id = owner_id
+        self.message = None
+        self.select = discord.ui.Select(placeholder="Pick the mod", options=[
+            discord.SelectOption(label=name[:100], value=name) for name in options
+        ])
+        self.select.callback = self._picked
+        self.add_item(self.select)
+        self.question = question
+
+    async def _picked(self, interaction: discord.Interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("This quiz belongs to the person who started it.", ephemeral=True)
+            return
+        chosen = self.select.values[0]
+        correct = chosen == self.answer
+        embed = discord.Embed(title="Modpack trivia", description=self.question,
+                              color=discord.Color.green() if correct else discord.Color.orange())
+        embed.add_field(name="Result", value=(f"Yep, it’s **{self.answer}**." if correct else
+                                               f"Not quite. The answer is **{self.answer}**."), inline=False)
+        embed.set_footer(text="Question generated from this server's local modpack summary")
+        self.select.disabled = True
+        await interaction.response.edit_message(embed=embed, view=self)
+
+
+def make_pack_trivia(owner_id: int):
+    """Build one quiz using exact local descriptions; never ask an LLM to invent facts."""
+    mods = [m for m in _read_pack_mods() if len(str(m.get("description", "")).strip()) >= 35]
+    if len(mods) < 4:
+        return None
+    chosen = random.choice(mods)
+    answer = str(chosen["display_name"])
+    distractors = [str(m["display_name"]) for m in random.sample([m for m in mods if m is not chosen], 3)]
+    options = distractors + [answer]
+    random.shuffle(options)
+    question = f"Which installed mod is described this way?\n\n> {str(chosen['description']).strip()[:700]}"
+    return question, TriviaView(question, answer, options, owner_id)
 
 
 def setup_commands(bot):
@@ -124,6 +272,17 @@ def setup_commands(bot):
         if not interaction.guild:
             await interaction.response.send_message("Use this command in a server.", ephemeral=True)
             return
+        # Prove the channel accepts Jenny's embeds before storing the setting.
+        probe = discord.Embed(title="Jenny logs connected", description="This channel will receive configured chat, profile, and error logs.", color=discord.Color.green())
+        try:
+            await interaction.channel.send(embed=probe)
+        except (discord.Forbidden, discord.HTTPException) as error:
+            print(f"[LOGS] Could not verify proposed channel {interaction.channel.id}: {error}")
+            await interaction.response.send_message(embed=discord.Embed(
+                title="Could not connect logs channel",
+                description="Jenny needs permission to view this channel, send messages, and embed links. The previous logs channel setting was kept.",
+                color=discord.Color.red()), ephemeral=True)
+            return
         set_logs_channel_id(interaction.channel.id, str(interaction.guild.id))
         
         # Handle different channel types - only TextChannel and similar have mention attribute
@@ -174,6 +333,77 @@ def setup_commands(bot):
                 color=discord.Color.red()
             )
             await interaction.response.send_message(embed=embed)
+
+    @tree.command(name="health", description="Check Jenny, voice, RAG data, and logs channel health")
+    async def health(interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        rows = []
+        bot_latency = getattr(bot, "latency", None)
+        rows.append(f"Discord: {'connected' if bot.is_ready() else 'offline'}" +
+                    (f" · {bot_latency * 1000:.0f} ms" if bot_latency is not None else ""))
+        try:
+            response = await asyncio.to_thread(requests.get, f"{PYTHON_API_URL}/health", timeout=3)
+            response.raise_for_status()
+            api_status = response.json()
+            rows.append("Python API: online")
+            rows.append(f"Voice service: {'online' if api_status.get('voice_service_online') else 'offline (optional)'}")
+            rows.append(f"RAG runtime: {'ready' if api_status.get('rag_ready') else 'starting or unavailable'}")
+        except Exception as error:
+            print(f"[HEALTH] Local API health request failed: {error}")
+            rows.extend(["Python API: offline or unreachable", "Voice service: unknown"])
+
+        stats_path = PROJECT_ROOT / "data" / "processed" / "processing_stats.json"
+        try:
+            stats = json.loads(stats_path.read_text(encoding="utf-8"))
+            rows.append(f"Pack index: {stats.get('total_documents', 0):,} documents · {stats.get('mods_processed', 0)} mods")
+        except (OSError, json.JSONDecodeError):
+            rows.append("Pack index: build it with tools/rag/build_index.py")
+
+        if interaction.guild:
+            log_id = get_logs_channel_id(str(interaction.guild.id))
+            channel = interaction.guild.get_channel(int(log_id)) if log_id else None
+            if channel is None:
+                rows.append("Logs channel: not configured or inaccessible")
+            else:
+                me = interaction.guild.me
+                perms = channel.permissions_for(me) if me else None
+                can_send = bool(perms and perms.send_messages and perms.embed_links)
+                rows.append(f"Logs channel: {channel.mention} · {'can post embeds' if can_send else 'missing send/embed permission'}")
+
+        rows.append(f"Message Content Intent: {'enabled in code' if getattr(bot.intents, 'message_content', False) else 'disabled in code'}; also enable it in Discord Developer Portal")
+        embed = discord.Embed(title="Jenny health", description="\n".join(rows), color=discord.Color.green())
+        embed.set_footer(text="Health reports configuration and service reachability; it does not send a test chat or AI request.")
+        await interaction.edit_original_response(embed=embed)
+
+    @tree.command(name="mods", description="List mods found in this server's local pack data")
+    @app_commands.describe(page="Page of 20 mods to show")
+    async def mods(interaction: discord.Interaction, page: app_commands.Range[int, 1, 100] = 1):
+        all_mods = sorted(_read_pack_mods(), key=lambda item: str(item["display_name"]).casefold())
+        if not all_mods:
+            await interaction.response.send_message(embed=discord.Embed(title="Modpack data unavailable", description="No local mod summary was found. Place the pack's JARs in `mods/` and run `tools/rag/build_index.py`.", color=discord.Color.red()), ephemeral=True)
+            return
+        start = (page - 1) * 20
+        if start >= len(all_mods):
+            await interaction.response.send_message(f"There are only {((len(all_mods) - 1) // 20) + 1} pages.", ephemeral=True)
+            return
+        lines = []
+        for item in all_mods[start:start + 20]:
+            description = str(item.get("description") or "No description in local metadata.").strip()
+            lines.append(f"**{item['display_name']}** · {description[:220]}")
+        embed = discord.Embed(title="Mods in this pack", description="\n".join(lines)[:4000], color=discord.Color.blurple())
+        embed.set_footer(text=f"Page {page} of {((len(all_mods) - 1) // 20) + 1} · {len(all_mods)} mods in local metadata")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @tree.command(name="trivia", description="Start a quiz using installed mod descriptions")
+    async def trivia(interaction: discord.Interaction):
+        quiz = make_pack_trivia(interaction.user.id)
+        if quiz is None:
+            await interaction.response.send_message(embed=discord.Embed(title="Pack trivia unavailable", description="I need at least four installed mods with descriptions in the local pack summary. Build or refresh the RAG index first.", color=discord.Color.red()), ephemeral=True)
+            return
+        question, view = quiz
+        embed = discord.Embed(title="Modpack trivia", description=question, color=discord.Color.blurple())
+        embed.set_footer(text="Choose one · clues come from this pack's local mod metadata")
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     @tree.command(name="replymode", description="Set reply mode: chat, vc, or both")
     @app_commands.describe(mode="Reply mode: chat (text only), vc (voice only), both (voice and text)")
@@ -1022,42 +1252,29 @@ def setup_commands(bot):
             await interaction.response.send_message(embed=embed)
             return
         
-        embed = discord.Embed(
-            title="📜 Jenny Changelog",
-            description="Complete public feature list for Jenny 0.85",
-            color=discord.Color.blue()
-        )
-
-        for entry in changelog_entries:
-            version = entry['version']
-            description = entry['description']
-            entry_type = entry['type']
-            date = entry['date']
-            
-            type_emoji = {
-                'release': '🚀',
-                'patch': '🔧',
-                'minor': '✨'
-            }.get(entry_type, '📝')
-            
-            embed.add_field(name=f"{type_emoji} v{version} · {date}", value=description[:1024], inline=False)
-            for section_name, values in (("Jenny can", entry["features"]), ("Release notes", entry["changes"])):
-                lines = []
-                for value in values:
-                    line = f"• {value}"
-                    if lines and sum(len(item) + 1 for item in lines) + len(line) > 1000:
-                        embed.add_field(name=section_name, value="\n".join(lines), inline=False)
-                        lines = []
-                    lines.append(line)
-                if lines:
-                    embed.add_field(name=section_name, value="\n".join(lines), inline=False)
-        embed.set_footer(text="Use /help for the commands available to you")
-        await interaction.response.send_message(embed=embed)
+        # Each release gets its own embed so the complete history remains readable.
+        changelog_entries = sorted(changelog_entries, key=lambda entry: tuple(int(part) if part.isdigit() else 0 for part in entry["version"].split(".")), reverse=True)
+        view = ChangelogPageView(changelog_entries, interaction.user.id)
+        await interaction.response.send_message(embed=view.make_embed(), view=view)
+        view.message = await interaction.original_response()
 
     @tree.error
     async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
         cause = getattr(error, "original", error)
         print(f"[COMMAND] /{interaction.command.name if interaction.command else 'unknown'} failed: {cause}")
+        if interaction.guild:
+            logs_id = get_logs_channel_id(str(interaction.guild.id))
+            log_channel = interaction.guild.get_channel(int(logs_id)) if logs_id else None
+            if isinstance(log_channel, (discord.TextChannel, discord.Thread)):
+                error_log = discord.Embed(
+                    title=f"Slash command failed: /{interaction.command.name if interaction.command else 'unknown'}",
+                    description=f"{type(cause).__name__}: {cause}"[:3500],
+                    color=discord.Color.red(), timestamp=discord.utils.utcnow())
+                error_log.add_field(name="Requested by", value=f"{interaction.user} ({interaction.user.id})", inline=False)
+                try:
+                    await log_channel.send(embed=error_log, allowed_mentions=discord.AllowedMentions.none())
+                except (discord.Forbidden, discord.HTTPException) as log_error:
+                    print(f"[LOGS] Could not post slash command failure to {log_channel.id}: {log_error}")
         embed = discord.Embed(title="Command failed", description=str(cause)[:1000], color=discord.Color.red())
         if isinstance(cause, (requests.exceptions.ConnectionError, requests.exceptions.Timeout)):
             embed.description = "A required Jenny service is offline or timed out. Start the voice/API service and try again."
