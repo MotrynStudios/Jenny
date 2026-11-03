@@ -1738,8 +1738,8 @@ def initialize_changelog() -> None:
     """Ensure the current public release entry exists without deleting history."""
     try:
         add_changelog_entry(
-            version="0.85",
-            description="Jenny 0.85 character, server role context, and live activity",
+            version="0.86",
+            description="Jenny 0.86 activity, message routing, pack tools, and diagnostics",
             features=[
                 "Conversational chat in the configured main channel, direct messages, and server mentions or replies",
                 "Voice conversations with speech recognition, spoken replies, and chat, voice, or both reply modes",
@@ -1760,7 +1760,10 @@ def initialize_changelog() -> None:
                 "Configured primary and backup provider fallbacks",
                 "Personable concise chat and original playful song responses",
                 "Jenny Belle character profile and live speaker/Jenny role metadata in server chat prompts",
-                "Minecraft singleplayer 26.3 Playing activity with a restart-resetting elapsed session title"
+                "Minecraft singleplayer 26.3 Playing activity with a restart-resetting elapsed session title",
+                "Pack-grounded /mods and interactive /trivia tools, with natural language entry points",
+                "Private /health status for Discord, API, voice, RAG corpus, logs channel, and message intent",
+                "Three-button changelog pager with a page-jump number button",
             ],
             changes=[
                 "Reduced automatic memory summaries to bounded batches, added a smaller retry for malformed output, and added persistent exponential backoff after repeated failures",
@@ -1771,11 +1774,15 @@ def initialize_changelog() -> None:
                 "Prevented an empty processed corpus from being reported as a successful RAG build",
                 "Avoided loading full user profile history unless a profile-related question needs it",
                 "Removed an unused prompt argument and duplicate voice-context injection",
-                "Preserved prior changelog entries instead of deleting them at startup"
+                "Preserved prior changelog entries instead of deleting them at startup",
+                "Registered the missing on_message Discord event, restoring chat responses and message logging",
+                "Added receive-event traces and clear user-visible errors for message processing failures",
+                "Verify the selected logs channel by posting a probe before saving it; include slash-command failures in audit logs",
+                "Refresh Minecraft activity every 15 seconds using a two-line Playing activity and process uptime",
             ],
             entry_type="release",
         )
-        print("[Changelog] Current release entry ensured at version 0.85")
+        print("[Changelog] Current release entry ensured at version 0.86")
     except Exception as error:
         print(f"[Changelog] Error initializing changelog: {error}")
 
