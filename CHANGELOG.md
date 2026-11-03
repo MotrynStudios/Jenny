@@ -1,5 +1,23 @@
 # Jenny changelog
 
+## 0.86
+
+### Added and improved
+
+- Rebuilt the Minecraft activity as a normal Playing status with the name `Minecraft`, a second line for singleplayer/version/session time, and 15-second refreshes. Discord bot accounts cannot set custom activity artwork, timestamps, or buttons through the bot gateway API.
+- Registered the missing `on_message` event. Chat replies, incoming message logs, and message-triggered tools can now run.
+- Added a receive trace before message-handler early returns and a friendly error reply when message handling fails.
+- Added `/health` for Discord/API/voice/RAG/log-channel status and a Message Content Intent reminder.
+- Added `/mods` browsing and interactive `/trivia` grounded in locally extracted mod descriptions; Jenny can also list mods or start trivia when asked in chat.
+- Changed `/changelog` to show one release per embed with exactly Back, page number, and Next buttons. The page number opens a jump form, and historical entries remain available.
+- `/setlogschannel` now verifies that Jenny can post an embed before replacing the saved channel. Slash-command and message-handler failures are also sent to that channel when possible.
+- Profile audit logs now include global username changes reported by member updates, and failed log delivery is printed to runtime logs.
+
+### Fixed
+
+- Corrected the principal cause of no chat responses and no incoming chat logs: `on_message` had no `@bot.event` registration.
+- Expanded the API health response to report bot initialization, indexed corpus size, RAG readiness, and voice heartbeat age.
+
 ## 0.85
 
 ### Fixed

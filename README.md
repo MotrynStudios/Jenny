@@ -102,7 +102,13 @@ Server text summaries are scoped to their text channel; voice summaries are scop
 
 The default 90-day cleanup removes old detailed message, voice, usage, profile-history, image-context, and short conversation-history records. Rolling summaries are retained until the user clears their memory with `/forgetmydata` or an administrator clears their history. This lets Jenny remember useful context without keeping every raw conversation indefinitely.
 
-See [CHANGELOG.md](CHANGELOG.md) for Jenny's current 0.85 feature list. Discord does not expose members' private profile bios through the bot API.
+See [CHANGELOG.md](CHANGELOG.md) for Jenny's current 0.86 feature list. `/health` checks the Discord connection, Python API, optional voice service, local RAG corpus, log channel permissions, and Message Content Intent configuration. `/mods` and `/trivia` use the locally extracted mod summary; pack trivia does not ask an AI model to invent quiz facts.
+
+Jenny's Minecraft Playing status is refreshed every 15 seconds and shows `Minecraft` with a second line for `Singleplayer · Version 26.3 · HH:MM:SS`. Discord's bot gateway API does not let bot accounts set custom game artwork, rich-presence timestamps, or buttons. Discord may show a default activity icon where available; the bot cannot upload or select Minecraft artwork through this API. The elapsed timer resets when the Python bot restarts.
+
+If chat appears silent, check the Python runtime log for `[EVENT] on_message received`. If that trace never appears, verify Message Content Intent is enabled both in the code and in the Discord Developer Portal, then confirm the bot has View Channel and Read Message History permissions. `/health` also reports the code-side intent and configured log-channel send/embed permissions.
+
+Discord does not expose members' private profile bios through the bot API.
 
 The activity is a bot-supported Playing status, not the full Rich Presence integration available to desktop games. The elapsed time is shown as text and advances once per minute.
 
