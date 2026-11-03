@@ -1,11 +1,5 @@
 # Jenny changelog
 
-## 0.89
-
-### Fixed
-
-- Corrected the repository display name to `Jenny`; the maintainer's GitHub username remains `theinevitableinvincible`.
-
 ## 0.88
 
 ### Added and improved
