@@ -30,6 +30,17 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _metadata_text(value: Any, default: str = "") -> str:
+    """Normalize TOML metadata values because mods use strings and arrays."""
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (dict, list, tuple)):
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+    return str(value).strip()
+
+
 @dataclass
 class ModMetadata:
     """Metadata extracted from mod JAR files"""
@@ -115,34 +126,55 @@ class ModpackExtractor:
                 
                 # Extract mod data
                 mods_data = data.get('mods', [])
-                if not mods_data:
+                if isinstance(mods_data, dict):
+                    mods_data = [mods_data]
+                if not isinstance(mods_data, list):
                     return None
-                
-                mod_info = mods_data[0]
-                mod_id = mod_info.get('modId', '').strip()
-                version = mod_info.get('version', 'unknown').strip()
-                display_name = mod_info.get('displayName', mod_id).strip()
-                description = mod_info.get('description', '').strip()
-                authors = mod_info.get('authors', '').split(',') if mod_info.get('authors') else []
+
+                mod_info = next((item for item in mods_data if isinstance(item, dict)), None)
+                if mod_info is None:
+                    logger.warning("No usable [[mods]] entry in %s", jar_path.name)
+                    return None
+                mod_id = _metadata_text(mod_info.get('modId'))
+                if not mod_id:
+                    logger.warning("Mod metadata has no modId in %s", jar_path.name)
+                    return None
+                version = _metadata_text(mod_info.get('version'), 'unknown')
+                display_name = _metadata_text(mod_info.get('displayName'), mod_id)
+                description = _metadata_text(mod_info.get('description'))
+                authors_value = mod_info.get('authors', [])
+                if isinstance(authors_value, str):
+                    authors = authors_value.split(',') if authors_value else []
+                elif isinstance(authors_value, list):
+                    authors = [_metadata_text(author) for author in authors_value]
+                elif authors_value:
+                    authors = [_metadata_text(authors_value)]
+                else:
+                    authors = []
                 
                 # Extract dependencies
                 dependencies = []
                 for dep_key, dep_data in data.items():
                     if dep_key.startswith('dependencies.'):
                         mod_name = dep_key.split('.')[1]
-                        dep_info = {
-                            'mod_id': mod_name,
-                            'type': dep_data.get('type', 'unknown'),
-                            'version_range': dep_data.get('versionRange', '*')
-                        }
-                        dependencies.append(dep_info)
+                        # TOML array tables such as [[dependencies.mod]] are
+                        # parsed as lists, while single tables are dicts.
+                        dep_entries = dep_data if isinstance(dep_data, list) else [dep_data]
+                        for dep_entry in dep_entries:
+                            if not isinstance(dep_entry, dict):
+                                continue
+                            dependencies.append({
+                                'mod_id': _metadata_text(dep_entry.get('modId'), mod_name),
+                                'type': _metadata_text(dep_entry.get('type'), 'unknown'),
+                                'version_range': _metadata_text(dep_entry.get('versionRange'), '*'),
+                            })
                 
                 return ModMetadata(
                     mod_id=mod_id,
                     version=version,
                     display_name=display_name,
                     description=description,
-                    authors=[a.strip() for a in authors],
+                    authors=[author.strip() for author in authors if author.strip()],
                     dependencies=dependencies,
                     file_path=str(jar_path)
                 )

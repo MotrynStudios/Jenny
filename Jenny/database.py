@@ -1738,15 +1738,15 @@ def initialize_changelog() -> None:
     """Ensure the current public release entry exists without deleting history."""
     try:
         add_changelog_entry(
-            version="0.82",
-            description="Jenny 0.82 cross-context user memory",
+            version="0.85",
+            description="Jenny 0.85 character, server role context, and live activity",
             features=[
                 "Conversational chat in the configured main channel, direct messages, and server mentions or replies",
                 "Voice conversations with speech recognition, spoken replies, and chat, voice, or both reply modes",
                 "Image and animated GIF understanding, plus image context for follow-up conversations",
                 "Minecraft mod, modpack, config, and recipe answers grounded in indexed RAG data",
                 "External search fallback when local mod data is incomplete, with uncertainty stated clearly",
-                "Scoped conversation history, user-controlled memory, and automatic long-term user, server, channel, and voice summaries",
+                "Conversation histories scoped by conversation, shared personal memory across DMs and servers, and automatic channel/voice summaries",
                 "Natural language command requests and slash commands for supported bot actions",
                 "Server and member information, avatars, roles, join dates, activity windows, and saved profile change history",
                 "Role assignment and removal with administrator, role hierarchy, and bot permission checks",
@@ -1758,20 +1758,24 @@ def initialize_changelog() -> None:
                 "Persistent Python, Node, and structured voice-turn logs with bounded retention",
                 "Voice service status and clear error replies when a connected feature is unavailable",
                 "Configured primary and backup provider fallbacks",
-                "Personable concise chat and original playful song responses"
+                "Personable concise chat and original playful song responses",
+                "Jenny Belle character profile and live speaker/Jenny role metadata in server chat prompts",
+                "Minecraft singleplayer 26.3 Playing activity with a restart-resetting elapsed session title"
             ],
             changes=[
                 "Reduced automatic memory summaries to bounded batches, added a smaller retry for malformed output, and added persistent exponential backoff after repeated failures",
                 "Restricted summary memory updates to participant IDs and corrected DM memory attribution",
                 "Linked personal memory across DMs, server text, and server voice by stable Discord user ID",
                 "Updated /mymemory to show cross-context personal memory and /forgetmydata to clear it across all Jenny conversations",
+                "Improved NeoForge TOML dependency parsing and safe ChromaDB metadata conversion",
+                "Prevented an empty processed corpus from being reported as a successful RAG build",
                 "Avoided loading full user profile history unless a profile-related question needs it",
                 "Removed an unused prompt argument and duplicate voice-context injection",
                 "Preserved prior changelog entries instead of deleting them at startup"
             ],
             entry_type="release",
         )
-        print("[Changelog] Current release entry ensured at version 0.82")
+        print("[Changelog] Current release entry ensured at version 0.85")
     except Exception as error:
         print(f"[Changelog] Error initializing changelog: {error}")
 

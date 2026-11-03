@@ -169,12 +169,15 @@ def finalize_voice_turn(request: VoiceRequest, response: str,
 # We'll import these when the bot is running
 jenny_generate: Optional[Callable] = None
 RAG_AVAILABLE: bool = False
+live_role_context: Optional[Callable[[str, str], Optional[str]]] = None
 
-def set_jenny_functions(generate_func: Optional[Callable], rag_available: bool = False) -> None:
-    """Set the Jenny functions that the API can call"""
-    global jenny_generate, RAG_AVAILABLE
+def set_jenny_functions(generate_func: Optional[Callable], rag_available: bool = False,
+                        role_context_func: Optional[Callable[[str, str], Optional[str]]] = None) -> None:
+    """Set the bot callbacks used by the API's voice conversation path."""
+    global jenny_generate, RAG_AVAILABLE, live_role_context
     jenny_generate = generate_func
     RAG_AVAILABLE = rag_available
+    live_role_context = role_context_func
 
 @app.get("/")
 async def root() -> Dict[str, Any]:
@@ -303,6 +306,12 @@ async def process_voice_input(request: VoiceRequest) -> VoiceResponse:
             channel_summary=channel_summary,
             current_time=current_time
         )
+        # Keep voice and text prompts aligned by providing the speaker's and
+        # Jenny's current server roles whenever the bot can resolve the member.
+        if live_role_context is not None:
+            role_context = live_role_context(request.guild_id, request.user_id)
+            if role_context:
+                messages.insert(-1, {"role": "system", "content": role_context})
         print(f"[{datetime.now(timezone.utc).isoformat()}] [Voice API] Prompt built in {(time.time() - prompt_start)*1000:.0f}ms")
         
         # Keep references grounded in the active voice room so follow-ups can

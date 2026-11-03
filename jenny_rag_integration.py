@@ -6,6 +6,7 @@ Provides hybrid approach: RAG for detailed questions + summary for general conte
 
 import json
 import hashlib
+import math
 import logging
 import os
 import threading
@@ -191,7 +192,11 @@ class JennyRAGSystem:
 
             # Extract texts and metadata
             texts = [item[0]['text'] for item in batch]
-            metadatas = [item[0]['metadata'] for item in batch]
+            # Chroma accepts scalar metadata values only. Minecraft language
+            # JSON and mod metadata can contain arrays/objects (for example,
+            # styled translation values), which otherwise abort an entire
+            # 100-document batch and leave an apparently empty index.
+            metadatas = [self._normalize_chroma_metadata(item[0].get('metadata', {})) for item in batch]
             ids = [item[1] for item in batch]
 
             # Create embeddings
@@ -214,6 +219,27 @@ class JennyRAGSystem:
             logger.info(f"Processed batch {i//batch_size + 1}/{(len(self.documents) + batch_size - 1)//batch_size}")
 
         logger.info("Collection population complete")
+
+    @staticmethod
+    def _normalize_chroma_metadata(metadata: Any) -> Dict[str, Any]:
+        """Convert nested or unsupported values to deterministic strings."""
+        if not isinstance(metadata, dict):
+            return {"metadata": json.dumps(metadata, ensure_ascii=False, sort_keys=True, default=str)}
+
+        normalized: Dict[str, Any] = {}
+        for raw_key, value in metadata.items():
+            key = str(raw_key).strip()
+            if not key or value is None:
+                continue
+            if isinstance(value, (str, int, bool)):
+                normalized[key] = value
+            elif isinstance(value, float) and math.isfinite(value):
+                normalized[key] = value
+            elif isinstance(value, (dict, list, tuple)):
+                normalized[key] = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+            else:
+                normalized[key] = str(value)
+        return normalized
 
     def query(self, question: str, top_k: int = 3) -> List[Dict[str, Any]]:
         """Query the knowledge base with a question (lazy-loads model if needed)"""
