@@ -1,5 +1,11 @@
 # Jenny changelog
 
+## 0.90
+
+### Fixed
+
+- Made “more” continue the saved solo trivia flow by opening its next question; multiplayer rounds remain open for the group to answer.
+
 ## 0.89
 
 ### Added and improved

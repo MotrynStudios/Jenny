@@ -1993,9 +1993,10 @@ def initialize_changelog() -> None:
     """Ensure the current public release entry exists without deleting history."""
     try:
         add_changelog_entry(
-            version="0.89",
-            description="Jenny 0.89 adds paged command results, contextual output memory, timed mod trivia, recipe cards, and TaCZ stat extraction",
+            version="0.90",
+            description="Jenny 0.90 continues saved solo trivia with the next question when the player asks for more",
             features=[
+                "Continue an active saved solo trivia game by asking Jenny for more",
                 "Paged embed output for large command results, with saved pages for more/next follow-ups",
                 "Context-aware saved command and trivia outputs stored in SQLite for the current conversation",
                 "Timed solo and multiplayer mod trivia, selectable difficulty, first-correct scoring, round limits, replay, and server leaderboard",
@@ -2055,7 +2056,7 @@ def initialize_changelog() -> None:
             ],
             entry_type="release",
         )
-        print("[Changelog] Current release entry ensured at version 0.89")
+        print("[Changelog] Current release entry ensured at version 0.90")
     except Exception as error:
         print(f"[Changelog] Error initializing changelog: {error}")
 
