@@ -1,5 +1,35 @@
 # Jenny changelog
 
+## 0.88
+
+### Added and improved
+
+- Added the MIT license under Mohamed Ayman Elnashar, with standard commercial-use and notice-retention terms.
+- Added public-project contact details and clarified contribution, support, and security-reporting routes.
+- Prepared the repository identity and setup documentation for a multi-user public release.
+
+## 0.87
+
+### Added and improved
+
+- Prepared the supplied Minecraft grass-block icon as `Jenny/assets/minecraft_grass_block.png` with the white background removed and transparent pixels preserved.
+- Added vision input from Discord image embeds and direct GIF/image URLs on trusted Discord, Tenor, and Giphy hosts, in server messages, replies, and DMs.
+- Added a complete-manifest roster response for questions like "what mods is Jenny playing?" and made RAG roster summaries use the same 79-mod manifest as `/mods`.
+- Added exact local metadata matches alongside over-fetched semantic candidates to improve item, recipe, and config retrieval.
+- Filtered vector results to the explicitly named mod when a question scopes itself to one, reducing cross-mod noise from large Create-family indexes.
+- Prevented whitespace-only config chunks from being generated or returned as retrieval evidence.
+- Changed server replies to require Jenny's actual name or a direct bot mention; text messages no longer use fuzzy voice wake-word guesses such as "China".
+- Made `/help` describe name-triggered replies correctly and include `/myusage` among the commands available in DMs.
+- Added separately selectable 24-hour, 7-day, and 30-day activity panels to `/serverinfo` and `/user`, including voice-channel connected time in addition to speech/STT/TTS metrics.
+- Counted voice-channel presence from the tracker forward and excluded bot downtime after restarts, instead of guessing historical connection time.
+- Refined Jenny's chat guidance toward short, natural replies with occasional mood variation and fewer service-desk follow-ups.
+
+### Fixed
+
+- Fixed the mismatch where the help embed said main-channel messages always trigger replies even though server responses are now mention-only.
+- Fixed pack-list questions going through top-k semantic search and returning an incomplete or inconsistent subset.
+- Expanded image discovery beyond attachments so embedded Discord previews and direct GIF links can reach the vision model.
+
 ## 0.86
 
 ### Added and improved
@@ -93,3 +123,4 @@ Jenny's current public feature baseline. This list describes intended available 
 - Removed stale guild-scoped slash command registrations left by old test syncs; global commands are now the single source of command definitions.
 - Expanded RAG extraction to nested mod JARs, SNBT, and INI config files.
 - Discord does not expose a member's private profile bio to the bot API.
+
