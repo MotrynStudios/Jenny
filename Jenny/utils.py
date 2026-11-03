@@ -7,7 +7,7 @@ from typing import Optional, List, Dict
 
 # Modpack-related keywords for RAG triggering
 MODPACK_KEYWORDS: List[str] = [
-    "craft", "recipe", "item", "block", "mod", "where find", "how make",
+    "craft", "crafting", "recipe", "gun", "guns", "tacz", "gunpack", "item", "block", "mod", "where find", "how make",
     "enchant", "smelt", "brew", "weapon", "armor", "tool", "biome",
     "dimension", "boss", "mob", "ore", "ingot", "nugget", "plate", "gear",
     "rod", "machine", "generator", "cable", "wire", "minecraft", "modpack",
@@ -149,3 +149,13 @@ def extract_corrected_response(response: str) -> str:
     
     return response
 
+ 
+def contextual_pack_query(text: str, history: List[Dict[str, str]]) -> str:
+    """Carry the previous specific pack topic into generic recipe follow-ups."""
+    if not re.search(r"\b(?:recipes?|guns?|craft|make|it|they|those)\b", text, re.I):
+        return text
+    for turn in reversed(history[-6:]):
+        previous = turn.get("content", "")
+        if turn.get("role") == "user" and is_modpack_related(previous):
+            return f"{text} (previous pack topic: {previous[:160]})"
+    return text

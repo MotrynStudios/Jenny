@@ -174,9 +174,14 @@ class ModpackDataProcessor:
             if not fields:
                 continue
             safe_path = re.sub(r"[^a-zA-Z0-9_-]+", "_", path)[:140]
+            category = row.get("_category", "custom")
+            data = row.get("data")
+            result = data.get("result") if isinstance(data, dict) else None
+            result_id = (result.get("id") or result.get("item")) if isinstance(result, dict) else result
             documents.append(Document(text=text[:6000], metadata={
                 "mod_id": mod_id, "display_name": display_name,
-                "document_type": "mod_data", "data_category": str(row.get("_category", "custom")),
+                "result_item": str(result_id or ""),
+                "document_type": "custom_recipe" if category == "custom_recipe" else "mod_data", "data_category": str(row.get("_category", "custom")),
                 "namespace": str(row.get("_namespace", mod_id)), "source_path": path,
             }, doc_id=f"{mod_id}_custom_{safe_path}"))
         return documents

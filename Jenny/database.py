@@ -2061,17 +2061,17 @@ def initialize_changelog() -> None:
     """Ensure the current public release entry exists without deleting history."""
     try:
         add_changelog_entry(
-            version="0.92",
-            description="Reduced peak CPU and memory use during local RAG index builds",
+            version="0.93",
+            description="Fixed public trivia, chat actions, and custom recipe retrieval",
             features=[
-                "RAG indexing defaults to two CPU threads and smaller batches without changing retrieval quality",
+                "Public timed solo and party trivia with model routing for chat requests",
             ],
             changes=[
-                "Added RAG_CPU_THREADS, RAG_INDEX_BATCH_SIZE, and RAG_EMBED_BATCH_SIZE tuning settings",
+                "Fixed role arguments, DM token usage, and custom workbench recipe indexing",
             ],
             entry_type="release",
         )
-        print("[Changelog] Current release entry ensured at version 0.92")
+        print("[Changelog] Current release entry ensured at version 0.93")
     except Exception as error:
         print(f"[Changelog] Error initializing changelog: {error}")
 

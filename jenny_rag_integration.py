@@ -377,7 +377,28 @@ class JennyRAGSystem:
                              if str(item["metadata"].get("mod_id", "")).casefold() in mentioned_mod_ids]
             formatted_results = [item for item in formatted_results
                                  if str(item["metadata"].get("mod_id", "")).casefold() in mentioned_mod_ids]
-        return (exact_matches + formatted_results)[:max(top_k, 10)]
+        matches = exact_matches + formatted_results
+        if re.search(r"\b(?:recipes?|craft(?:ing)?|how (?:do|to).*make)\b", question, re.I):
+            recipe_types = {"recipe", "custom_recipe"}
+            recipes = [item for item in matches if item["metadata"].get("document_type") in recipe_types]
+            if mentioned_mod_ids:
+                # A broad request for examples needs complete recipe records from
+                # the named mod, even when semantic neighbors are mostly stats.
+                paths = {item["metadata"].get("source_path") for item in recipes}
+                for doc in self.documents:
+                    metadata = doc.get("metadata", {})
+                    path = metadata.get("source_path")
+                    if len(recipes) >= 6:
+                        break
+                    if (metadata.get("document_type") == "custom_recipe" and path not in paths
+                            and metadata.get("mod_id") in mentioned_mod_ids
+                            and (not re.search(r"\bguns?\b", question, re.I) or "/recipe/gun/" in str(path))):
+                        recipes.append({"text": doc["text"], "metadata": metadata, "distance": 0.0})
+                        paths.add(path)
+            if re.search(r"\bguns?\b", question, re.I):
+                recipes.sort(key=lambda item: "/recipe/gun/" not in str(item["metadata"].get("source_path")))
+            matches = recipes + [item for item in matches if item not in recipes]
+        return matches[:max(top_k, 10)]
 
     def get_modpack_context(self) -> str:
         """Get the compact modpack name summary."""

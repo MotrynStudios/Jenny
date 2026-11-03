@@ -387,14 +387,18 @@ class ModpackExtractor:
         records: List[Dict[str, Any]] = []
         datapack = re.compile(r"^data/([^/]+)/(.+\.json)$", re.I)
         custom_asset = re.compile(r"^assets/([^/]+)/custom/(.+?/data/.+\.json)$", re.I)
+        custom_recipe = re.compile(r"^assets/[^/]+/custom/[^/]+/data/[^/]+/recipes?/.*\.json$", re.I)
         try:
             with zipfile.ZipFile(jar_path, "r") as jar:
-                for file_path in jar.namelist():
+                # Keep workbench recipes ahead of generic data when the archive hits its cap.
+                for file_path in sorted(jar.namelist(), key=lambda path: not bool(custom_recipe.match(path))):
                     match = datapack.match(file_path) or custom_asset.match(file_path)
                     if not match:
                         continue
                     namespace, relative_path = match.groups()
                     category = relative_path.split("/", 1)[0].lower()
+                    if custom_recipe.match(file_path):
+                        category = "custom_recipe"
                     if category in {"recipe", "recipes", "advancement", "advancements"}:
                         continue
                     info = jar.getinfo(file_path)

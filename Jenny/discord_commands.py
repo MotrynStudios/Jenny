@@ -284,11 +284,11 @@ async def send_more_from_cache(message: discord.Message, user_id: str,
             if payload.get("mode") == "solo":
                 await start_cached_trivia_question(message, cached)
             else:
-                await message.reply(embed=make_notice_embed("We're still in the middle of that group round. Pick an answer on the trivia message."), mention_author=False)
+                await message.reply("We're still in the middle of that group round. Pick an answer on the trivia message.", mention_author=False)
         elif payload.get("status") == "awaiting_next":
             await start_cached_trivia_question(message, cached)
         else:
-            await message.reply(embed=make_notice_embed("That trivia game has ended. Say 'trivia' to start another one, or use /trivialeaderboard to see the scores."), mention_author=False)
+            await message.reply("That trivia game has ended. Say 'trivia' to start another one, or use /trivialeaderboard to see the scores.", mention_author=False)
         return True
     pages = payload.get("pages") or []
     if len(pages) <= 1:
@@ -491,29 +491,31 @@ def make_pack_trivia(owner_id: int, difficulty: str = "medium", rounds: int = 1,
                      mode: str = "solo", guild_id: Optional[int] = None,
                      conversation_id: Optional[str] = None):
     """Build a quiz clue strictly from extracted metadata, items, or recipes."""
-    candidates = _trivia_candidates()
+    candidates = list({item["name"].casefold(): item for item in _trivia_candidates()}.values())
     if len(candidates) < 4:
         return None
-    difficulty = difficulty.lower()
-    source_key = {"easy": "description", "medium": "item", "hard": "recipe"}.get(difficulty, "medium")
-    usable = [item for item in candidates if len(item[source_key]) >= (30 if source_key == "description" else 3)]
-    if len(usable) < 4:
-        return None
-    actual_difficulty = {"description": "easy", "item": "medium", "recipe": "hard"}[source_key]
-    question_rows = []
-    pool = usable[:]
-    random.shuffle(pool)
-    for item in pool[:max(1, min(20, rounds))]:
+    source = {"easy": "description", "medium": "item", "hard": "recipe"}.get(difficulty, "item")
+    questions = []
+    random.shuffle(candidates)
+    for item in candidates:
         answer = item["name"]
-        distractors = random.sample([other["name"] for other in candidates if other["name"] != answer], 3)
-        options = distractors + [answer]
+        clue = item[source].strip()
+        if not clue:
+            continue
+        if source != "description":
+            clue = re.sub(r"\b[\w.-]+:", "", clue).replace("_", " ").replace("/", " ")
+        # Reject clues that still spell out the answer after namespace removal.
+        normalize = lambda value: re.sub(r"[^a-z0-9]", "", value.casefold())
+        if not normalize(clue) or normalize(answer) in normalize(clue):
+            continue
+        options = random.sample([other["name"] for other in candidates if other is not item], 3) + [answer]
         random.shuffle(options)
-        clue_value = item[source_key]
-        clue_kind = {"description": "mod description", "item": "item or block", "recipe": "recipe output"}[source_key]
-        clue = (f"Which mod is described by this pack metadata?\n\n> {clue_value[:550]}" if source_key == "description"
-                else f"Which mod adds **{clue_value}**? This clue is from the extracted {clue_kind} data.")
-        question_rows.append({"question": clue, "answer": answer, "options": options, "difficulty": actual_difficulty})
-    return question_rows
+        question = f"Which mod fits this clue? **{discord.utils.escape_markdown(clue[:450])}**"
+        questions.append({"question": question, "answer": answer, "options": options, "difficulty": difficulty})
+    if not questions:
+        return None
+    # Each question is used at most once per game.
+    return questions[:max(1, min(20, rounds))]
 
 
 class TriviaChoiceButton(discord.ui.Button):
@@ -539,161 +541,163 @@ class TriviaNextView(discord.ui.View):
     @discord.ui.button(label="Next question", style=discord.ButtonStyle.primary)
     async def next_question(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.owner_id:
-            await interaction.response.send_message(embed=make_notice_embed("Start your own solo trivia to play."), ephemeral=True)
+            await interaction.response.send_message("Start your own solo trivia to play.")
             return
         if self.next_index >= len(self.questions):
-            await interaction.response.send_message(embed=make_notice_embed("That was the last question. Play again for a fresh set."), ephemeral=True)
+            await interaction.response.send_message("That was the last question. Play again for a fresh set.")
             return
+        if self.is_finished():
+            await interaction.response.defer()
+            return
+        self.stop()
         await send_trivia_question(interaction, self.questions, self.cache_id, self.next_index, self.owner_id)
 
     @discord.ui.button(label="Play again", style=discord.ButtonStyle.success)
     async def play_again(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.owner_id:
-            await interaction.response.send_message(embed=make_notice_embed("Start your own solo trivia to play."), ephemeral=True)
+            await interaction.response.send_message("Start your own solo trivia to play.")
             return
-        rows = make_pack_trivia(self.owner_id, "medium", 5, "solo")
+        rows = make_pack_trivia(self.owner_id, self.questions[0]["difficulty"], len(self.questions), "solo")
         if not rows:
-            await interaction.response.send_message(embed=make_notice_embed("I couldn't find enough local mod data for trivia."), ephemeral=True)
+            await interaction.response.send_message("I couldn't find enough local mod data for trivia.")
             return
         await send_trivia_question(interaction, rows, None, 0, self.owner_id)
 
 
 class TriviaGameView(discord.ui.View):
-    """Timed quiz round. In multiplayer the first correct answer scores."""
-    def __init__(self, questions: list[dict[str, Any]], owner_id: int, mode: str,
-                 scores: Optional[dict[str, dict[str, Any]]] = None, index: int = 0,
-                 cache_id: Optional[int] = None, started_at: Optional[float] = None):
-        super().__init__(timeout=10)
+    """A public round with one monotonic deadline and a live countdown."""
+    def __init__(self, questions, owner_id, mode, scores=None, index=0, cache_id=None):
+        super().__init__(timeout=None)
         self.questions, self.owner_id, self.mode = questions, owner_id, mode
-        self.scores, self.index, self.cache_id = scores or {}, index, cache_id
-        self.started_at = started_at or asyncio.get_running_loop().time()
+        self.scores, self.index, self.cache_id = scores if scores is not None else {}, index, cache_id
+        self.message = None
+        self.started_at = None
+        self.timer = None
+        self.closed = False
         for i, choice in enumerate(questions[index]["options"]):
             self.add_item(TriviaChoiceButton(self, choice, i))
 
-    def embed(self, status: str = "Choose an answer"):
-        row = self.questions[self.index]
-        embed = discord.Embed(title=f"Modpack trivia · Round {self.index + 1}/{len(self.questions)}",
-                              description=row["question"], color=discord.Color.blurple())
-        embed.add_field(name="Difficulty", value=f"{row['difficulty'].title()} · first correct answer gets { {'easy': 1, 'medium': 2, 'hard': 3}.get(row['difficulty'], 2)} point(s)", inline=True)
-        if self.mode == "party":
-            embed.add_field(name="Scores", value="\n".join(f"{x['username']}: {x['points']}" for x in self.scores.values())[:1000] or "No points yet", inline=True)
-        embed.set_footer(text=f"{status} · 10 seconds per round")
-        return embed
+    def content(self, seconds=10, notice=""):
+        mode = "Solo" if self.mode == "solo" else "Party"
+        rules = "Only the host answers" if self.mode == "solo" else "First correct answer scores · final round is worth 3 points"
+        prefix = f"{notice}\n\n" if notice else ""
+        return (f"{prefix}**{mode} trivia · {self.index + 1}/{len(self.questions)}**\n"
+                f"{self.questions[self.index]['question']}\n{rules} · **{seconds}s left**")
 
-    async def choose(self, interaction: discord.Interaction, chosen: str):
+    def start(self, message, notice=""):
+        self.message = message
+        self.started_at = asyncio.get_running_loop().time()
+        self.timer = asyncio.create_task(self.count_down(notice))
+
+    async def count_down(self, notice):
+        loop = asyncio.get_running_loop()
+        try:
+            for remaining in range(9, -1, -1):
+                await asyncio.sleep(max(0, self.started_at + 10 - remaining - loop.time()))
+                if self.closed:
+                    return
+                if remaining == 0:
+                    await self.finish("Time's up.")
+                    return
+                await self.message.edit(content=self.content(remaining, notice))
+        except discord.HTTPException as error:
+            print(f"[TRIVIA] Countdown could not update: {error}")
+            if not self.closed:
+                await asyncio.sleep(max(0, self.started_at + 10 - loop.time()))
+                await self.finish("Time's up.")
+
+    async def choose(self, interaction, chosen):
+        if self.closed or self.started_at is None:
+            await interaction.response.defer()
+            return
         if self.mode == "solo" and interaction.user.id != self.owner_id:
-            await interaction.response.send_message(embed=make_notice_embed("This is someone else's solo quiz."), ephemeral=True)
+            await interaction.response.send_message("Only the host can answer this solo round.")
+            return
+        elapsed = asyncio.get_running_loop().time() - self.started_at
+        if elapsed >= 10:
+            await interaction.response.defer()
             return
         row = self.questions[self.index]
-        elapsed = max(0.0, asyncio.get_running_loop().time() - self.started_at)
-        self.scores.setdefault(str(interaction.user.id), {"username": interaction.user.display_name, "points": 0})
-        if chosen != row["answer"]:
-            # Solo answers are revealed immediately. Multiplayer rounds remain open after a wrong guess.
-            if self.mode == "party":
-                await interaction.response.send_message(embed=make_notice_embed("Nope, keep going."), ephemeral=True)
+        correct = chosen == row["answer"]
+        if self.mode == "party":
+            player = self.scores.setdefault(str(interaction.user.id), {"username": interaction.user.display_name, "points": 0})
+            if not correct:
+                await interaction.response.defer()
                 return
-            self.stop()
-            next_index = self.index + 1
-            await interaction.response.edit_message(embed=self.result_embed(False, elapsed), view=TriviaNextView(self.owner_id, self.questions, self.cache_id, next_index))
-            self._save("awaiting_next", next_index)
-            return
-        self.stop()
-        earned = {"easy": 1, "medium": 2, "hard": 3}.get(row["difficulty"], 2)
-        player = self.scores.setdefault(str(interaction.user.id), {"username": interaction.user.display_name, "points": 0})
-        player["points"] += earned
-        if self.mode == "solo":
-            next_index = self.index + 1
-            await interaction.response.edit_message(embed=self.result_embed(True, elapsed, interaction.user.display_name, earned), view=TriviaNextView(self.owner_id, self.questions, self.cache_id, next_index))
-            self._save("awaiting_next", next_index)
-            return
-        await self._advance_party(interaction, f"{interaction.user.mention} solved it in **{elapsed:.1f} seconds** and gets **{earned} points**.")
+            points = 3 if self.index == len(self.questions) - 1 else 1
+            player["points"] += points
+            notice = f"{interaction.user.display_name} solved it in **{elapsed:.1f}s**. **+{points} points.**"
+        else:
+            notice = f"{interaction.user.display_name} solved it in **{elapsed:.1f}s**." if correct else "Not quite."
+        await self.finish(notice, interaction)
 
-    def result_embed(self, correct: bool, elapsed: float, username: str = "", earned: int = 0):
-        row = self.questions[self.index]
-        embed = discord.Embed(title="Modpack trivia", description=row["question"], color=discord.Color.green() if correct else discord.Color.orange())
-        message = (f"{username} got it in **{elapsed:.1f} seconds**. **+{earned} points.**" if correct else "Not quite.")
-        embed.add_field(name="Answer", value=f"{message}\nThe answer was **{row['answer']}**.", inline=False)
-        return embed
-
-    def _save(self, status: str, index: Optional[int] = None):
+    def _save(self, status, index):
         if self.cache_id:
-            update_command_output(self.cache_id, {"status": status, "mode": self.mode, "index": self.index if index is None else index,
+            update_command_output(self.cache_id, {"status": status, "mode": self.mode, "index": index,
                 "questions": self.questions, "scores": self.scores})
 
-    async def _advance_party(self, interaction: discord.Interaction, notice: str):
-        self.index += 1
-        if self.index >= len(self.questions):
-            winners = []
-            high = max((v["points"] for v in self.scores.values()), default=0)
-            winners = [uid for uid, value in self.scores.items() if value["points"] == high]
-            if interaction.guild_id:
-                record_trivia_game(str(interaction.guild_id), self.scores, winners)
-            summary = "\n".join(f"{v['username']}: {v['points']}" for v in sorted(self.scores.values(), key=lambda row: row["points"], reverse=True)) or "No one scored this game."
-            embed = discord.Embed(title="Trivia finished", description=f"{notice}\n\n**Final scores**\n{summary}\n\nWinner: {', '.join(self.scores[u]['username'] for u in winners) if winners else 'No winner'}", color=discord.Color.gold())
-            view = TriviaEndView(interaction.guild_id)
-            await interaction.response.edit_message(embed=embed, view=view)
-            self._save("ended")
+    async def finish(self, notice, interaction=None):
+        if self.closed:
+            if interaction:
+                await interaction.response.defer()
             return
-        next_view = TriviaGameView(self.questions, self.owner_id, self.mode, self.scores, self.index, self.cache_id)
-        next_view.started_at = asyncio.get_running_loop().time()
-        next_view.message = interaction.message
-        self._save("active")
-        await interaction.response.edit_message(embed=next_view.embed(notice), view=next_view)
-
-    async def on_timeout(self):
-        if self.index >= len(self.questions):
-            return
-        row = self.questions[self.index]
-        self.index += 1
+        self.closed = True
+        self.stop()
+        if self.timer is not None and self.timer is not asyncio.current_task():
+            self.timer.cancel()
+        next_index = self.index + 1
+        result = f"{notice} Answer: **{self.questions[self.index]['answer']}**."
+        next_round = None
+        if self.mode == "solo":
+            view = TriviaNextView(self.owner_id, self.questions, self.cache_id, next_index)
+            self._save("awaiting_next", next_index)
+        elif next_index < len(self.questions):
+            next_round = view = TriviaGameView(self.questions, self.owner_id, self.mode, self.scores, next_index, self.cache_id)
+            result = view.content(notice=result)
+            self._save("active", next_index)
+        else:
+            guild_id = self.message.guild.id if self.message.guild else None
+            ranked = sorted(self.scores.items(), key=lambda pair: pair[1]["points"], reverse=True)
+            high = ranked[0][1]["points"] if ranked else 0
+            winners = [uid for uid, player in ranked if high and player["points"] == high]
+            if guild_id:
+                record_trivia_game(str(guild_id), self.scores, winners)
+            scores = "\n".join(f"{player['username']}: {player['points']}" for _, player in ranked[:15])
+            winner_names = ", ".join(self.scores[uid]["username"] for uid in winners[:10])
+            result += f"\n\n**Party finished** · Winner: {winner_names[:250] or 'Nobody'}\n{scores[:850]}"
+            view = TriviaEndView(guild_id, self.questions[0]["difficulty"], len(self.questions))
+            self._save("ended", next_index)
         try:
-            if self.mode == "solo" or self.index >= len(self.questions):
-                if self.index >= len(self.questions) and self.mode == "party":
-                    await self._finish_timeout()
-                else:
-                    embed = discord.Embed(title="Time's up", description=f"The answer was **{row['answer']}**.", color=discord.Color.orange())
-                    if self.message:
-                        await self.message.edit(embed=embed, view=TriviaNextView(self.owner_id, self.questions, self.cache_id, self.index))
-                    self._save("awaiting_next", self.index)
+            if interaction:
+                await interaction.response.edit_message(content=result, embed=None, view=view)
             else:
-                next_view = TriviaGameView(self.questions, self.owner_id, self.mode, self.scores, self.index, self.cache_id)
-                next_view.message = self.message
-                await self.message.edit(embed=next_view.embed(f"Time's up. Answer: {row['answer']}"), view=next_view)
-        except (discord.HTTPException, AttributeError) as error:
-            print(f"[TRIVIA] Timed round could not update its message: {error}")
-
-    async def _finish_timeout(self):
-        winners = []
-        high = max((v["points"] for v in self.scores.values()), default=0)
-        winners = [uid for uid, value in self.scores.items() if value["points"] == high]
-        guild_id = self.message.guild.id if self.message and self.message.guild else None
-        if guild_id:
-            record_trivia_game(str(guild_id), self.scores, winners)
-        embed = discord.Embed(title="Trivia finished", description=f"Time's up. The answer was **{self.questions[self.index - 1]['answer']}**.\n\n" + "\n".join(f"{v['username']}: {v['points']}" for v in self.scores.values()), color=discord.Color.gold())
-        if self.message:
-            await self.message.edit(embed=embed, view=TriviaEndView(guild_id))
-        self._save("ended")
+                await self.message.edit(content=result, embed=None, view=view)
+            if next_round:
+                next_round.start(self.message, f"{notice} Answer: **{self.questions[self.index]['answer']}**.")
+        except discord.HTTPException as error:
+            print(f"[TRIVIA] Round result could not update: {error}")
 
 
 class TriviaEndView(discord.ui.View):
-    def __init__(self, guild_id: Optional[int]):
+    def __init__(self, guild_id: Optional[int], difficulty="medium", rounds=5):
         super().__init__(timeout=600)
-        self.guild_id = guild_id
+        self.guild_id, self.difficulty, self.rounds = guild_id, difficulty, rounds
 
     @discord.ui.button(label="Play again", style=discord.ButtonStyle.success)
     async def again(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await start_trivia_interaction(interaction, "medium", 5, "party" if interaction.guild else "solo")
+        await start_trivia_interaction(interaction, self.difficulty, self.rounds, "party" if interaction.guild else "solo")
 
     @discord.ui.button(label="Leaderboard", style=discord.ButtonStyle.primary)
     async def leaderboard(self, interaction: discord.Interaction, button: discord.ui.Button):
         rows = get_trivia_leaderboard(str(self.guild_id)) if self.guild_id else []
         text = "\n".join(f"{i}. {r['username']} · {r['points']} pts · {r['games_won']} wins" for i, r in enumerate(rows[:20], 1)) or "No completed games yet."
-        await interaction.response.send_message(embed=discord.Embed(title="Trivia leaderboard", description=text, color=discord.Color.gold()), ephemeral=True)
+        await interaction.response.send_message(f"**Trivia leaderboard**\n{text}"[:1900])
 
 
 async def send_trivia_question(interaction: discord.Interaction, questions, cache_id, index: int, owner_id: int):
     view = TriviaGameView(questions, owner_id, "solo", index=index, cache_id=cache_id)
-    await interaction.response.edit_message(embed=view.embed(), view=view)
-    view.message = interaction.message
+    await interaction.response.edit_message(content=view.content(), embed=None, view=view)
+    view.start(interaction.message)
     if cache_id:
         update_command_output(cache_id, {"status": "active", "mode": "solo", "index": index,
             "questions": questions, "scores": {}})
@@ -704,11 +708,11 @@ async def start_cached_trivia_question(message: discord.Message, cached: dict[st
     questions = payload.get("questions") or []
     index = int(payload.get("index", 0))
     if index >= len(questions):
-        await message.reply(embed=make_notice_embed("That was the last question. Start a new game with /trivia."), mention_author=False)
+        await message.reply("That was the last question. Start a new game with /trivia.", mention_author=False)
         return
     view = TriviaGameView(questions, message.author.id, "solo", index=index, cache_id=int(cached["id"]))
-    sent = await message.reply(embed=view.embed(), view=view, mention_author=False)
-    view.message = sent
+    sent = await message.reply(view.content(), view=view, mention_author=False)
+    view.start(sent)
     update_command_output(int(cached["id"]), {"status": "active", "mode": "solo", "index": index, "questions": questions, "scores": payload.get("scores", {})})
 
 
@@ -716,7 +720,7 @@ async def start_trivia_message(message: discord.Message, difficulty: str = "medi
                                mode: str = "party"):
     questions = make_pack_trivia(message.author.id, difficulty, rounds, mode, message.guild.id if message.guild else None)
     if not questions:
-        await message.reply(embed=discord.Embed(title="Pack trivia unavailable", description="The local extraction needs at least four mods with usable metadata, item/block names, or recipes for that difficulty.", color=discord.Color.red()), mention_author=False)
+        await message.reply("I couldn’t find enough usable local mod data for that trivia difficulty.", mention_author=False)
         return
     view = TriviaGameView(questions, message.author.id, mode)
     conversation_id = _output_conversation_id(message.author.id, message.guild.id if message.guild else None, message.channel.id)
@@ -724,25 +728,21 @@ async def start_trivia_message(message: discord.Message, difficulty: str = "medi
         str(message.channel.id), conversation_id, "trivia", "Modpack trivia",
         {"status": "active", "mode": mode, "index": 0, "questions": questions, "scores": {}})
     view.cache_id = cache_id
-    view.message = await message.reply(embed=view.embed(), view=view, mention_author=False)
+    view.start(await message.reply(view.content(), view=view, mention_author=False))
 
 
 async def start_trivia_interaction(interaction: discord.Interaction, difficulty: str, rounds: int, mode: str):
     questions = make_pack_trivia(interaction.user.id, difficulty, rounds, mode, interaction.guild_id)
     if not questions:
-        await interaction.response.send_message(embed=discord.Embed(title="Pack trivia unavailable", description="The local extraction needs at least four mods with usable metadata, item/block names, or recipes for that difficulty.", color=discord.Color.red()), ephemeral=True)
+        await interaction.response.send_message("I couldn’t find enough usable local mod data for that trivia difficulty.")
         return
     view = TriviaGameView(questions, interaction.user.id, mode)
     cache_id = save_command_output(str(interaction.user.id), str(interaction.guild_id) if interaction.guild_id else None,
         str(interaction.channel_id), _output_conversation_id(interaction.user.id, interaction.guild_id, interaction.channel_id),
         "trivia", "Modpack trivia", {"status": "active", "mode": mode, "index": 0, "questions": questions, "scores": {}})
     view.cache_id = cache_id
-    if mode == "solo" or not interaction.guild_id:
-        await interaction.response.send_message(embed=view.embed(), view=view, ephemeral=True)
-        view.message = await interaction.original_response()
-    else:
-        await interaction.response.send_message(embed=view.embed(), view=view)
-        view.message = await interaction.original_response()
+    await interaction.response.send_message(view.content(), view=view)
+    view.start(await interaction.original_response())
 
 
 class ActivityPeriodView(discord.ui.View):
@@ -1044,11 +1044,11 @@ def setup_commands(bot):
     @tree.command(name="trivialeaderboard", description="Show the server's modpack trivia leaderboard")
     async def trivialeaderboard(interaction: discord.Interaction):
         if not interaction.guild_id:
-            await interaction.response.send_message(embed=make_notice_embed("The trivia leaderboard is server-specific; use it in a server."), ephemeral=True)
+            await interaction.response.send_message("Use the trivia leaderboard in a server.")
             return
         rows = get_trivia_leaderboard(str(interaction.guild_id), 500)
         if not rows:
-            await interaction.response.send_message(embed=discord.Embed(title="Trivia leaderboard", description="No one has completed a multiplayer game yet.", color=discord.Color.gold()), ephemeral=True)
+            await interaction.response.send_message("No one has completed a multiplayer game yet.")
             return
         pages = []
         for start in range(0, len(rows), 15):
@@ -1057,7 +1057,7 @@ def setup_commands(bot):
             embed.description = "\n".join(f"**{start + index + 1}.** {row['username']} · {row['points']} points · {row['games_won']} wins · {row['games_played']} games" for index, row in enumerate(group))
             embed.set_footer(text=f"Players {start + 1}-{start + len(group)} of {len(rows)}")
             pages.append(embed)
-        await send_paged_interaction(interaction, pages, "trivia_leaderboard", ephemeral=True)
+        await send_paged_interaction(interaction, pages, "trivia_leaderboard", ephemeral=False)
 
     @tree.command(name="replymode", description="Set reply mode: chat, vc, or both")
     @app_commands.describe(mode="Reply mode: chat (text only), vc (voice only), both (voice and text)")

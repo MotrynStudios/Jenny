@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import asyncio
@@ -21,7 +22,7 @@ from discord.ext import commands
 from dotenv import load_dotenv
 
 from ai import generate, analyze_image, transcribe_audio_attachment, looks_like_vision_refusal, split_into_discord_chunks
-from utils import extract_corrected_response, contains_jenny_name
+from utils import extract_corrected_response, contains_jenny_name, contextual_pack_query
 from database import (
     log_message,
     get_recent_log_text,
@@ -668,6 +669,12 @@ async def handle_dm_message(message: discord.Message) -> None:
         if await send_more_from_cache(message, user_id, None, conversation_id):
             return
 
+    if re.search(r"\b(?:my|me)\b.*\btoken usage\b|\btoken usage\b.*\b(?:my|me)\b", user_input, re.I):
+        rows = get_token_usage(None, user_id)
+        total = sum(row["total_tokens"] for row in rows)
+        await message.reply(embed=discord.Embed(title="Your token usage", description=f"{total:,} tokens across your recorded requests."), mention_author=False)
+        return
+
     # A full pack roster is deterministic local data, not a semantic retrieval
     # question. Keep this path identical in DMs and server chat.
     if is_pack_list_request(user_input):
@@ -680,9 +687,6 @@ async def handle_dm_message(message: discord.Message) -> None:
         log_dm_text(user_id, "Jenny", "Displayed the installed mod list.", "outgoing")
         return
 
-    if re.search(r"\b(trivia|quiz|test me|ask me .*question)\b", user_input, re.IGNORECASE):
-        await start_trivia_message(message, mode="solo", rounds=5)
-        return
 
     # Get user's personal memory and history
     user_history = get_conversation_history(conversation_id, user_id, limit=24)
@@ -747,7 +751,7 @@ async def handle_dm_message(message: discord.Message) -> None:
     rag_context = ""
     if RAG_AVAILABLE and related:
         try:
-            rag_context = await asyncio.to_thread(get_rag_context, user_input)
+            rag_context = await asyncio.to_thread(get_rag_context, contextual_pack_query(user_input, user_history))
         except Exception as error:
             print(f"[RAG] DM retrieval failed: {error}")
     if related:
@@ -766,6 +770,13 @@ async def handle_dm_message(message: discord.Message) -> None:
             usage_context = {"user_id": user_id, "guild_id": None}
             reply = await generate(messages, usage_context=usage_context)
             print(f"[DM] Response generated: {reply[:100]}...")
+
+        dm_command = re.match(r"^CMD:(\w+)\b(.*)", reply.strip(), re.IGNORECASE | re.DOTALL)
+        if dm_command:
+            if dm_command[1].lower() == "trivia":
+                await run_model_chat_action(message, user_input, "trivia", dm_command[2].strip())
+                return
+            reply = "That command needs a server channel."
 
         # Sanitize and process response
         reply = _sanitize_final_reply(reply)
@@ -831,7 +842,44 @@ async def set_reply_mode_from_chat(message: discord.Message, mode: str, acknowle
         await message.reply(chunk)
 
 
-async def handle_natural_command(message: discord.Message, user_input: str) -> bool:
+def is_role_request(text):
+    return bool(re.search(r"^(?:(?:hey\s+)?jenny[, :]*\s*)?(?:(?:can|could|would|will) you\s+|please\s+)*"
+                          r"(?:assign|add|give|remove|take|revoke)\s+", text.strip(), re.I))
+
+
+async def run_model_chat_action(message, request, command, arguments):
+    """Use model arguments only for an explicit matching request."""
+    if command == "trivia":
+        if not re.search(r"\b(?:trivia|quiz|test me|ask me .{0,30}question)\b", request, re.I):
+            await send_command_error(message, "Trivia request needed", "Ask me to start trivia first.")
+            return
+        match = re.fullmatch(r"(solo|party)\s+(easy|medium|hard)\s+(\d{1,2})", arguments, re.I)
+        if not match or not 1 <= int(match[3]) <= 20:
+            await message.reply("Choose a trivia mode, difficulty, and 1 to 20 questions, or use /trivia.", mention_author=False)
+            return
+        mode, difficulty = match[1].lower(), match[2].lower()
+        await start_trivia_message(message, difficulty, int(match[3]), mode if message.guild else "solo")
+        return
+    verb = re.search(r"\b(assign|add|give|remove|take|revoke)\b", request, re.I)
+    action = "remove" if command == "removerole" else "assign"
+    if not is_role_request(request) or not verb or (verb[1].lower() in {"remove", "take", "revoke"}) != (action == "remove"):
+        await send_command_error(message, "Explicit role request needed", "Ask me directly to add or remove a role.")
+        return
+    try:
+        values = json.loads(arguments)
+        member, role = (values[key].strip() for key in ("member", "role"))
+        member = re.sub(r"^<@!?(\d+)>$", r"\1", member).lstrip("@")
+        role = re.sub(r"^<@&(\d+)>$", r"\1", role).lstrip("@")
+        if not member or not role or any(value.casefold() not in request.casefold() for value in (member, role)):
+            raise ValueError("Role arguments must occur in the original request")
+    except (ValueError, TypeError, KeyError, AttributeError):
+        await send_command_error(message, "Role change needs clarification", "Include the exact member and role names or mention both.")
+        return
+    if not await handle_natural_command(message, request, (action, member, role)):
+        await send_command_error(message, "Role change unavailable", "Use this in a server where I can see the member.")
+
+
+async def handle_natural_command(message: discord.Message, user_input: str, role_args=None) -> bool:
     """Handle explicit, low-risk command requests without guessing parameters."""
     guild = message.guild
     if not guild:
@@ -849,9 +897,9 @@ async def handle_natural_command(message: discord.Message, user_input: str) -> b
 
     role_action = re.search(r"\b(assign|add|give|remove|take|revoke)\b", lowered)
     role_change = bool(role_action and re.search(r"\broles?\b|<@&\d+>", lowered))
-    if role_change:
-        action = role_action.group(1).lower()
-        removing = action in {"remove", "take", "revoke"} or bool(re.search(r"\b(remove|take|revoke)\b", lowered))
+    if role_args is not None or role_change:
+        action = role_args[0] if role_args else role_action.group(1).lower()
+        removing = action in {"remove", "take", "revoke"}
         if not actor.guild_permissions.administrator:
             await send_command_error(message, "Permission denied", "Only a server administrator can change roles through me.")
             return True
@@ -874,15 +922,18 @@ async def handle_natural_command(message: discord.Message, user_input: str) -> b
                 parsed_role = re.sub(r"^the\s+", "", parsed_role, flags=re.IGNORECASE)
                 break
 
-        target_mentions = [member for member in mentioned_members if member.id != bot_user_id]
+        if role_args:
+            _, parsed_target, parsed_role = role_args
+        target_mentions = [member for member in mentioned_members if member.id != bot_user_id and not role_args]
         targets = target_mentions
         if not targets and parsed_target:
             target_key = parsed_target.casefold()
-            targets = [member for member in guild.members if target_key in {
+            targets = [member for member in guild.members if member.id != bot_user_id and target_key in {
+                str(member.id),
                 member.name.casefold(), member.display_name.casefold(),
                 (member.global_name or "").casefold(),
             }]
-        role_ids = [int(value) for value in re.findall(r"<@&(\d+)>", user_input)]
+        role_ids = [int(parsed_role)] if role_args and parsed_role.isdecimal() else ([] if role_args else [int(value) for value in re.findall(r"<@&(\d+)>", user_input)])
         role_candidates = [guild.get_role(role_ids[0])] if role_ids else []
         if not role_ids and parsed_role:
             role_key = parsed_role.casefold()
@@ -1272,9 +1323,7 @@ async def process_incoming_message(message: discord.Message) -> None:
 
     await send_interaction_message_log(message, message.content or "[voice note or attachment]", "User interaction")
 
-    # Pack trivia and mod lists come from local extracted mod descriptions,
-    # without a model call or claims that are not present in this pack.
-    asks_trivia = bool(re.search(r"\b(trivia|quiz|test me|ask me .*question|minecraft question)\b", trigger_content, re.IGNORECASE))
+    # Roster requests use the local manifest. The model routes trivia requests.
     asks_mod_list = is_pack_list_request(trigger_content)
     conversation_id = f"guild:{guild.id}:channel:{message.channel.id}"
     continuation_text = trigger_content
@@ -1284,9 +1333,6 @@ async def process_incoming_message(message: discord.Message) -> None:
     if re.fullmatch(r"\s*(?:more|next|continue|show (?:me )?(?:the )?rest|keep going)\s*[.!?]*\s*", continuation_text, re.IGNORECASE):
         if await send_more_from_cache(message, str(message.author.id), str(guild.id), conversation_id):
             return
-    if asks_trivia:
-        await start_trivia_message(message, mode="party", rounds=5)
-        return
     if asks_mod_list:
         pages = make_mod_list_pages()
         if not pages:
@@ -1302,7 +1348,7 @@ async def process_incoming_message(message: discord.Message) -> None:
     user_input = user_input.strip()
 
     try:
-        if await handle_natural_command(message, user_input):
+        if not is_role_request(user_input) and await handle_natural_command(message, user_input):
             return
     except Exception as error:
         print(f"[COMMAND] Natural language command failed: {error}")
@@ -1467,7 +1513,7 @@ async def process_incoming_message(message: discord.Message) -> None:
         try:
             # Search direct pack questions and context-dependent follow-ups;
             # ordinary chat bypasses the local embedding index.
-            rag_context = await asyncio.to_thread(get_rag_context, user_input)
+            rag_context = await asyncio.to_thread(get_rag_context, contextual_pack_query(user_input, user_history))
         except Exception as e:
             print(f"[RAG] Retrieval failed: {e}")
     if modpack_related:
@@ -2048,8 +2094,12 @@ async def process_incoming_message(message: discord.Message) -> None:
                         await message.reply(embed=embed)
 
                 elif command in {"assignrole", "removerole"}:
-                    action_text = ("remove role " if command == "removerole" else "assign role ") + message.content
-                    await handle_natural_command(message, action_text)
+                    await run_model_chat_action(message, user_input, command, reply_without_cmd)
+                    return
+
+                elif command == "trivia":
+                    await run_model_chat_action(message, user_input, command, reply_without_cmd)
+                    return
                     
                 elif command == "profilehistory":
                     print("[COMMAND] Viewing user profile history")

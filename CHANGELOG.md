@@ -1,5 +1,10 @@
 # Jenny changelog
 
+## 0.93
+
+- Fixed trivia answer leaks and added public rounds with a live countdown and distinct solo and party rules.
+- Routed chat trivia and role requests through the model. Fixed DM token usage and custom mod workbench recipe retrieval.
+
 ## 0.92
 
 ### Improved
