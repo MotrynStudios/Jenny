@@ -61,7 +61,7 @@ from database import (
     cleanup_expired_records,
     get_combined_user_summary,
 )
-from discord_commands import setup_commands
+from discord_commands import setup_commands, make_pack_trivia, _read_pack_mods
 from search import perform_search
 
 from prompt_builder import build_text_prompt, get_relevant_user_context, limit_history_by_tokens
@@ -404,6 +404,10 @@ async def on_member_update(before: discord.Member, after: discord.Member) -> Non
     # Check for relevant changes
     changed = False
     changes = []
+
+    if before.name != after.name:
+        changed = True
+        changes.append({"field": "Username", "old": before.name, "new": after.name})
     
     if before.display_name != after.display_name:
         changed = True
@@ -455,7 +459,10 @@ async def on_member_update(before: discord.Member, after: discord.Member) -> Non
                         embed.add_field(name=change['field'], value=f"**{change['old']}** → **{change['new']}**", inline=False)
                 
                 embed.set_footer(text=f"Timestamp: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
-                await channel.send(embed=embed)
+                try:
+                    await channel.send(embed=embed)
+                except (discord.Forbidden, discord.HTTPException) as error:
+                    print(f"[LOGS] Could not post member profile change to {channel.id}: {error}")
 
 
 @bot.event
@@ -517,7 +524,30 @@ async def on_user_update(before: discord.User, after: discord.User) -> None:
                     else:
                         embed.add_field(name=change['field'], value=f"{change['old']} to {change['new']}", inline=False)
                 embed.set_footer(text=f"{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
-                await channel.send(embed=embed)
+                try:
+                    await channel.send(embed=embed)
+                except (discord.Forbidden, discord.HTTPException) as error:
+                    print(f"[LOGS] Could not post global profile update to {channel.id}: {error}")
+
+
+async def send_runtime_error_log(guild: discord.Guild, title: str, error: Exception,
+                                 source_channel: Optional[discord.abc.GuildChannel] = None) -> None:
+    """Send actionable runtime failures to the configured server audit channel."""
+    channel_id = get_logs_channel_id(str(guild.id))
+    if not channel_id:
+        return
+    channel = guild.get_channel(int(channel_id))
+    if not isinstance(channel, (discord.TextChannel, discord.Thread)):
+        print(f"[LOGS] Cannot report failure; configured channel {channel_id} is unavailable in guild {guild.id}")
+        return
+    detail = f"{type(error).__name__}: {error}"
+    embed = discord.Embed(title=title, description=detail[:3500], color=discord.Color.red(), timestamp=discord.utils.utcnow())
+    if source_channel is not None:
+        embed.add_field(name="Source", value=f"{getattr(source_channel, 'mention', source_channel.id)} · {source_channel.id}", inline=False)
+    try:
+        await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+    except (discord.Forbidden, discord.HTTPException) as send_error:
+        print(f"[LOGS] Could not post runtime failure to {channel_id}: {send_error}")
 
 
 async def handle_dm_message(message: discord.Message) -> None:
@@ -856,6 +886,12 @@ async def send_configured_message_log(message: discord.Message, content: str) ->
     if not channel_id or str(message.channel.id) == str(channel_id):
         return
     channel = guild.get_channel(int(channel_id))
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(int(channel_id))
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException) as error:
+            print(f"[LOGS] Configured channel {channel_id} could not be fetched: {error}")
+            return
     if not isinstance(channel, (discord.TextChannel, discord.Thread)):
         print(f"[LOGS] Configured channel {channel_id} is missing or inaccessible in guild {guild.id}")
         return
@@ -883,6 +919,12 @@ async def send_configured_reply_log(source_message: discord.Message, content: st
     if guild is None or not channel_id or str(source_message.channel.id) == str(channel_id):
         return
     channel = guild.get_channel(int(channel_id))
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(int(channel_id))
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException) as error:
+            print(f"[LOGS] Configured channel {channel_id} could not be fetched: {error}")
+            return
     if not isinstance(channel, (discord.TextChannel, discord.Thread)):
         return
     embed = discord.Embed(description=content[:3500], color=discord.Color.blurple(), timestamp=discord.utils.utcnow())
@@ -895,7 +937,29 @@ async def send_configured_reply_log(source_message: discord.Message, content: st
         print(f"[LOGS] Could not post Jenny's reply to configured channel {channel_id}: {error}")
 
 
+@bot.event
 async def on_message(message: discord.Message) -> None:
+    """Record message-path exceptions and return a clear failure to the sender."""
+    try:
+        await process_incoming_message(message)
+    except Exception as error:
+        print(f"[ERROR] on_message failed for message {message.id}: {type(error).__name__}: {error}")
+        if message.guild:
+            await send_runtime_error_log(message.guild, "Message handler failed", error, message.channel)
+        try:
+            await message.reply(embed=discord.Embed(
+                title="Jenny couldn't handle that message",
+                description="I hit an internal error. The details were written to the runtime log.",
+                color=discord.Color.red()), mention_author=False)
+        except discord.HTTPException as send_error:
+            print(f"[ERROR] Could not report message failure to user: {send_error}")
+
+
+async def process_incoming_message(message: discord.Message) -> None:
+    # Keep a low-risk receive trace before every early return. If this line is
+    # absent after a user sends a message, the Discord gateway did not deliver it.
+    channel_id = getattr(message.channel, "id", "unknown")
+    print(f"[EVENT] on_message received author={message.author.id} guild={getattr(message.guild, 'id', 'DM')} channel={channel_id} bot={message.author.bot} content_chars={len(message.content)} attachments={len(message.attachments)}")
     if message.author.bot:
         return
 
@@ -907,6 +971,7 @@ async def on_message(message: discord.Message) -> None:
     guild = message.guild
     author = message.author if isinstance(message.author, discord.Member) else guild.get_member(message.author.id)
     if author is None:
+        print(f"[EVENT] Could not resolve member {message.author.id} in guild {guild.id}; check Members intent and cache availability")
         return
     main_channel_id = get_main_channel_id(str(guild.id))
     is_main_channel = main_channel_id and str(message.channel.id) == main_channel_id
@@ -1007,6 +1072,32 @@ async def on_message(message: discord.Message) -> None:
     print(f"[MSG] Jenny enabled: {jenny_enabled}")
     if jenny_enabled == "false":
         print(f"[MSG] Skipping response - Jenny is disabled")
+        return
+
+    # Pack trivia and mod lists come from local extracted mod descriptions,
+    # without a model call or claims that are not present in this pack.
+    asks_trivia = bool(re.search(r"\b(trivia|quiz|test me|ask me .*question|minecraft question)\b", trigger_content, re.IGNORECASE))
+    asks_mod_list = bool(re.search(r"\b(list|show|what are)\b.*\b(mods|mod list|installed mods)\b", trigger_content, re.IGNORECASE))
+    if asks_trivia:
+        quiz = make_pack_trivia(author.id)
+        if quiz is None:
+            await message.reply(embed=discord.Embed(title="Pack trivia unavailable", description="I need at least four mods with descriptions in this pack's local summary. Build or refresh the RAG index first.", color=discord.Color.red()), mention_author=False)
+        else:
+            question, view = quiz
+            embed = discord.Embed(title="Modpack trivia", description=question, color=discord.Color.blurple())
+            embed.set_footer(text="Choose one · clues come from this pack's local mod metadata")
+            await message.reply(embed=embed, view=view, mention_author=False)
+        return
+    if asks_mod_list:
+        mods = sorted(_read_pack_mods(), key=lambda item: str(item.get("display_name", "")).casefold())
+        if not mods:
+            await message.reply(embed=discord.Embed(title="Modpack data unavailable", description="I couldn't find a local mod summary. Run `tools/rag/build_index.py` after adding the pack data.", color=discord.Color.red()), mention_author=False)
+        else:
+            lines = [f"**{item['display_name']}** · {str(item.get('description') or 'No local description.')[:150]}" for item in mods[:25]]
+            embed = discord.Embed(title=f"Mods in this pack · {len(mods)} total", description="\n".join(lines)[:4000], color=discord.Color.blurple())
+            if len(mods) > 25:
+                embed.set_footer(text="Use /mods to browse the full list")
+            await message.reply(embed=embed, mention_author=False)
         return
 
     user_input = message.content or (voice_transcript or "")
