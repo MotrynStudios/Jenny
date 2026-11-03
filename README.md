@@ -1,4 +1,4 @@
-# theinevitableinvincible-jenny
+# Jenny
 
 Jenny is an open-source, multi-server Discord companion for relaxed chat, voice conversations, and grounded Minecraft modpack/config help.
 
@@ -114,7 +114,7 @@ Server text summaries are scoped to their text channel; voice summaries are scop
 
 The default 90-day cleanup removes old detailed message, voice, usage, profile-history, image-context, and short conversation-history records. Rolling summaries are retained until the user clears their memory with `/forgetmydata` or an administrator clears their history. This lets Jenny remember useful context without keeping every raw conversation indefinitely.
 
-See [CHANGELOG.md](CHANGELOG.md) for Jenny's current 0.88 release notes. `/health` checks the Discord connection, Python API, optional voice service, local RAG corpus, log channel permissions, and Message Content Intent configuration. `/mods` and `/trivia` use the locally extracted mod summary; pack trivia does not ask an AI model to invent quiz facts.
+See [CHANGELOG.md](CHANGELOG.md) for Jenny's current 0.89 release notes. `/health` checks the Discord connection, Python API, optional voice service, local RAG corpus, log channel permissions, and Message Content Intent configuration. `/mods` and `/trivia` use the locally extracted mod summary; pack trivia does not ask an AI model to invent quiz facts.
 
 Jenny's Minecraft Playing status is refreshed every 15 seconds and shows `Minecraft` with a second line for `Singleplayer · Version 26.3 · HH:MM:SS`. Discord's bot gateway presence supports basic activity status but does not expose the desktop game's custom artwork card controls. The user-supplied grass-block image is maintainer-local and is not included in this public repository release. The elapsed timer resets when the Python bot restarts.
 
