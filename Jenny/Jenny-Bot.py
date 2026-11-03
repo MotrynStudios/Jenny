@@ -146,8 +146,7 @@ intents.members = True  # Required for member join/update events (user profiles)
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-setup_commands(bot)
-# Voice functionality moved to Node.js service
+setup_commands(bot)# Voice functionality moved to Node.js service
 # No Python voice integration - discord-ext-voice_recv caused issues
 VOICE_AVAILABLE = False
 
