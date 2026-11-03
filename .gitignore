@@ -1,0 +1,42 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+voice_service/.env
+voice_service/.env.*
+!voice_service/.env.example
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Runtime data, logs, and generated indexes
+Jenny/memory.db*
+Jenny/modpack_context.txt
+logs/
+/data/*
+!/data/.gitkeep
+/mods/*
+!/mods/.gitkeep
+/config/*
+!/config/.gitkeep
+voice_service/temp_audio_*.wav
+
+# Node dependencies
+voice_service/node_modules/
+
+# Editors and OS files
+.vscode/
+.idea/
+.devin/
+Thumbs.db
+Desktop.ini
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+coverage.xml
+htmlcov/
+build/
+dist/

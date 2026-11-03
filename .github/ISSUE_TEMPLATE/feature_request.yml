@@ -1,0 +1,22 @@
+name: Feature request
+description: Suggest an improvement to Jenny.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What should be easier or better?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like Jenny to do?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Where should it work?
+      description: Mention chat, DMs, voice, servers, or Minecraft RAG as applicable.
