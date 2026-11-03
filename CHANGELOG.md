@@ -12,7 +12,7 @@
 
 ### Added and improved
 
-- Prepared the supplied Minecraft grass-block icon as `Jenny/assets/minecraft_grass_block.png` with the white background removed and transparent pixels preserved.
+- Prepared the supplied Minecraft grass-block icon locally for a future client-side Rich Presence integration; the image asset is not included in this repository release.
 - Added vision input from Discord image embeds and direct GIF/image URLs on trusted Discord, Tenor, and Giphy hosts, in server messages, replies, and DMs.
 - Added a complete-manifest roster response for questions like "what mods is Jenny playing?" and made RAG roster summaries use the same 79-mod manifest as `/mods`.
 - Added exact local metadata matches alongside over-fetched semantic candidates to improve item, recipe, and config retrieval.
@@ -123,4 +123,3 @@ Jenny's current public feature baseline. This list describes intended available 
 - Removed stale guild-scoped slash command registrations left by old test syncs; global commands are now the single source of command definitions.
 - Expanded RAG extraction to nested mod JARs, SNBT, and INI config files.
 - Discord does not expose a member's private profile bio to the bot API.
-
