@@ -79,6 +79,10 @@ The builder runs all three stages in order: JAR/config extraction, searchable do
 
 Supported config formats include TOML, JSON/JSON5, YAML, properties, CFG, CONF, INI, SNBT, and TXT. Unsupported formats are skipped. Files larger than the extraction limit are skipped. Treat any redaction as best-effort and review extracted output before sharing it.
 
+Mod metadata readers recognize Forge/NeoForge TOML and Fabric/Quilt JSON. Standard data-pack recipes and advancements are read from singular and plural directory names to cover Minecraft's folder naming changes. TaCZ custom gunpack stat JSON is also extracted, including JSONC comments. Extraction does not validate that a pack's mods support the same Minecraft version or loader, and it cannot decode every mod's private recipe/config format. A mod appearing in `/mods` confirms metadata was found, not that all of its custom content was extracted. One bot installation indexes one pack corpus shared across its Discord servers.
+
+Use `/recipe <item>` for extracted standard recipe cards. Recipe grids show a compact symbol pattern with a legend. Choose separate recipe messages when a search finds multiple recipes. Custom machines and recipe systems need dedicated parsers; a missing standard recipe match means the current corpus has no matching record, not proof that an item has no recipe.
+
 See [tools/rag/README.md](tools/rag/README.md) for the exact expected folder layout, supported extensions, extraction boundaries, build command, and troubleshooting. The startup warning `all_documents.json` not found means the processing stage did not produce the corpus in the bot's `data/processed` folder. A `chroma.sqlite3` file alone does not prove that it contains vectors; check the builder's final document count and generated `data/embeddings/rag_manifest.json`.
 
 Jenny cites retrieved evidence sources in modpack answers. `RAG_MAX_DISTANCE` controls which vector matches count as evidence: lower values are stricter, but may miss relevant material. Tune it with representative questions. If no local evidence qualifies, the answer should say what is unknown; web results are supplementary context only.
@@ -91,6 +95,7 @@ At runtime, vector retrieval is limited to Minecraft/mod/config questions and sh
 - Keep bounded recent context plus automatically summarized long-term channel, voice, and user memory. Active streams are checked every 15 minutes; a new stream gets an initial summary, then summaries run after 25 new records or six hours of activity.
 - Search recent stored server chat and summarize channels.
 - Answer server, member, profile-history, last-message, and token-usage questions; `/help` privately lists commands available in that context. `/serverinfo` and `/user` have 24-hour, 7-day, and 30-day buttons that show only the selected activity window.
+- Browse large lists and histories through button-paged embeds. `/recipe` shows extracted recipe cards, and `/trivia` supports timed solo rounds or first-correct multiplayer with difficulty, question count, replay, and a server leaderboard.
 - Show member avatars and roles. Assign and remove roles only when the requester is an administrator, outranks the role, and Jenny also has Manage Roles and outranks it.
 - Include the current speaker's and Jenny's actual guild roles in server text and voice context, so role-aware answers use live server information.
 - Show a Minecraft Singleplayer 26.3 Playing activity with elapsed time in the title, refreshed every 15 seconds and reset when the Python bot restarts. Bot presence cannot use a custom large image; a custom activity image is not included in this repository release.
@@ -114,7 +119,7 @@ Server text summaries are scoped to their text channel; voice summaries are scop
 
 The default 90-day cleanup removes old detailed message, voice, usage, profile-history, image-context, and short conversation-history records. Rolling summaries are retained until the user clears their memory with `/forgetmydata` or an administrator clears their history. This lets Jenny remember useful context without keeping every raw conversation indefinitely.
 
-See [CHANGELOG.md](CHANGELOG.md) for Jenny's current 0.88 release notes. `/health` checks the Discord connection, Python API, optional voice service, local RAG corpus, log channel permissions, and Message Content Intent configuration. `/mods` and `/trivia` use the locally extracted mod summary; pack trivia does not ask an AI model to invent quiz facts.
+See [CHANGELOG.md](CHANGELOG.md) for Jenny's current 0.89 release notes. `/health` checks the Discord connection, Python API, optional voice service, local RAG corpus, log channel permissions, and Message Content Intent configuration. `/mods`, `/recipe`, and `/trivia` use locally extracted data; pack trivia does not ask an AI model to invent quiz facts. Trivia difficulty uses metadata descriptions, extracted item/block names, or recipe outputs, and multiplayer scoreboards are scoped to each Discord server.
 
 Jenny's Minecraft Playing status is refreshed every 15 seconds and shows `Minecraft` with a second line for `Singleplayer · Version 26.3 · HH:MM:SS`. Discord's bot gateway presence supports basic activity status but does not expose the desktop game's custom artwork card controls. The user-supplied grass-block image is maintainer-local and is not included in this public repository release. The elapsed timer resets when the Python bot restarts.
 
@@ -147,4 +152,3 @@ requirements.txt          Python dependencies
 ```
 
 The two root-level Python modules are runtime components, not extraction tools. `jenny_api_server.py` connects the optional Node voice process to the already-running Python bot, and `jenny_rag_integration.py` is imported by the bot for live retrieval. The `tools/rag/` folder contains commands that an owner runs to build or refresh local modpack data.
-

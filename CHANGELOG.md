@@ -1,5 +1,24 @@
 # Jenny changelog
 
+## 0.89
+
+### Added and improved
+
+- Added paged embeds with Back, page, and Next controls for large command results, including server usage member lists.
+- Saved recent command results and active trivia state in SQLite so follow-up messages can refer to the last result or continue a solo quiz.
+- Added `/recipe` with readable recipe cards, shaped-grid layouts, paging, and optional separate recipe messages.
+- Reworked trivia into timed solo questions and multiplayer rounds with 1/2/3 points by difficulty, first-correct scoring, play-again controls, and a server leaderboard.
+- Added clue levels grounded in extracted metadata, item/block names, and recipe outputs.
+- Added TaCZ custom gunpack JSONC extraction and indexed gun, ammo, and attachment stats; custom models and textures remain outside the text index.
+- Added Fabric and Quilt mod metadata parsing alongside Forge and NeoForge metadata.
+- Documented RAG format support and its per-installation, per-modpack limits.
+
+### Fixed
+
+- Fixed malformed indentation in the server message handler that prevented the handler from loading.
+- Replaced the old single-user trivia dropdown with timed rounds, round progression, and multiplayer scoring.
+- Kept incorrect guessers in the participant record for the leaderboard.
+
 ## 0.88
 
 ### Added and improved

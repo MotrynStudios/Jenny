@@ -93,6 +93,54 @@ class ModpackDataProcessor:
         
         with open(items_blocks_path, 'r', encoding='utf-8') as f:
             return json.load(f)
+
+    def load_gun_data(self, mod_dir: Path) -> List[Dict[str, Any]]:
+        """Load structured gunpack records emitted by the TaCZ extractor."""
+        path = mod_dir / "gun_data.json"
+        if not path.exists():
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return [item for item in data if isinstance(item, dict)] if isinstance(data, list) else []
+        except (OSError, json.JSONDecodeError) as error:
+            logger.warning("Could not read TaCZ gun data %s: %s", path, error)
+            return []
+
+    def create_gun_data_documents(self, mod_id: str, display_name: str,
+                                  rows: List[Dict[str, Any]]) -> List[Document]:
+        """Index human-readable gun/ammo/attachment stats without binary assets."""
+        documents = []
+        for row in rows:
+            identifier = str(row.get("_data_id", "unknown"))
+            category = str(row.get("_category", "data")).lower()
+            name = str(row.get("name") or row.get("display_name") or identifier.replace("_", " ").title())
+            flattened = []
+
+            def visit(value: Any, prefix: str = "") -> None:
+                if isinstance(value, dict):
+                    for key, nested in value.items():
+                        if key.startswith("_"):
+                            continue
+                        visit(nested, f"{prefix}.{key}" if prefix else key)
+                elif isinstance(value, list):
+                    if value and all(not isinstance(item, (dict, list)) for item in value):
+                        flattened.append(f"{prefix}: {', '.join(map(str, value))}")
+                    else:
+                        for index, nested in enumerate(value):
+                            visit(nested, f"{prefix}[{index}]")
+                elif value is not None and str(value).strip():
+                    flattened.append(f"{prefix}: {value}")
+
+            visit(row)
+            text = (f"{category.title()} data: {name}\nMod: {display_name}\nMod ID: {mod_id}\n"
+                    f"Pack: {row.get('_pack_name', 'unknown')}\nIdentifier: {identifier}\n" + "\n".join(flattened))
+            documents.append(Document(text=text[:6000], metadata={
+                "mod_id": mod_id, "display_name": display_name,
+                "document_type": "mod_stat", "stat_category": category,
+                "stat_name": name, "data_id": identifier,
+                "pack_name": str(row.get("_pack_name", "unknown")),
+            }, doc_id=f"{mod_id}_{row.get('_pack_name', 'pack')}_{category}_{identifier}"))
+        return documents
     
     def create_mod_overview_document(self, metadata: Dict[str, Any], language_data: Dict[str, str]) -> Document:
         """Create a comprehensive overview document for a mod"""
@@ -341,6 +389,7 @@ class ModpackDataProcessor:
         language_data = self.load_language_data(mod_dir) or {}
         recipes = self.load_recipes(mod_dir) or []
         advancements = self.load_advancements(mod_dir) or []
+        gun_data = self.load_gun_data(mod_dir)
         
         mod_id = metadata.get('mod_id', mod_dir.name)
         display_name = metadata.get('display_name', mod_id)
@@ -370,6 +419,9 @@ class ModpackDataProcessor:
         if advancements:
             advancement_docs = self.create_advancement_documents(mod_id, display_name, advancements, language_data)
             documents.extend(advancement_docs)
+
+        if gun_data:
+            documents.extend(self.create_gun_data_documents(mod_id, display_name, gun_data))
         
         return documents
     
@@ -533,4 +585,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

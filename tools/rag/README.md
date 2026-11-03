@@ -27,10 +27,19 @@ For a launcher or server instance elsewhere, pass its actual directories to the 
 
 ## What gets read
 
-- Mod JARs are ZIP archives. Jenny reads Forge/NeoForge `META-INF/*mods.toml`, English language JSON under `assets/<mod-id>/lang/`, and recipe and advancement JSON under `data/<mod-id>/recipe(s)/` and `advancement(s)/`.
+- Mod JARs are ZIP archives. Jenny reads Forge/NeoForge `META-INF/*mods.toml`, Fabric `fabric.mod.json`, Quilt `quilt.mod.json`, English language JSON under `assets/<mod-id>/lang/`, and recipe and advancement JSON under `data/<mod-id>/recipe(s)/` and `advancement(s)/`.
+- TaCZ JSONC gunpack records for guns, ammunition, and attachments are extracted from `assets/tacz/custom/` and indexed as text stats. This does not include 3D models, textures, or arbitrary custom data formats used by other mods.
 - Text config files are read recursively. Supported extensions are `.toml`, `.json`, `.json5`, `.yaml`, `.yml`, `.properties`, `.cfg`, `.conf`, `.ini`, `.snbt`, and `.txt`.
 - Files over 2 MB and binary files are skipped. `.bak` files are skipped because their extension is unsupported. Config text is indexed as text; the builder does not evaluate config expressions or infer runtime behavior.
 - Common credential-looking values are redacted before indexing, but this is best-effort. Review generated files before sharing them.
+
+## Coverage and limits
+
+Extraction is format-driven, not a universal mod API. Minecraft versions change folder names and schemas; the extractor handles both singular and plural recipe/advancement folders but does not validate game-version or loader constraints. Forge/NeoForge, Fabric, and Quilt metadata are recognized. Common text configs are indexed as text with best-effort credential redaction. Custom binary databases, generated runtime recipes, and proprietary mod-specific config encodings are not interpreted automatically. Add a focused parser for a mod when its content does not use standard data-pack files.
+
+The Timeless & Classics Guns (TaCZ) core JAR stores gun data in a custom gunpack under `assets/tacz/custom/<pack>/data/tacz/data/`. Jenny extracts its JSONC stat records and indexes the numeric values. The standard recipe count only includes standard data-pack recipe files. TaCZ's custom workbench and gunpack composition are not ordinary crafting-table recipes, so `/recipe` may not return a usable recipe for a gun.
+
+One bot installation has one shared index for every Discord server it serves. Different pack corpora currently need separate installations; per-server index selection is not implemented.
 
 The builder writes extracted inputs to `data/raw_data/`, searchable evidence to `data/processed/all_documents.json`, and the vector index to `data/embeddings/`. The bot's startup warning about `all_documents.json` means the extraction/build step has not completed successfully or the bot is pointed at a different project folder. Run the builder after adding or updating a pack.
 
@@ -56,4 +65,3 @@ Check the stages in order:
 If indexing fails while adding a batch, inspect the first Chroma metadata validation error in `logs/jenny_rag.log`. Mod language data can contain nested arrays or objects. The indexer converts those values to JSON strings before sending them to Chroma. After updating the code, rerun the combined builder so it can rebuild the collection from the processed JSON.
 
 The `mods/`, `config/`, generated `data/`, local SQLite memory, and runtime logs are ignored by Git. They belong to each installation and should not be committed unless you intentionally publish that pack's data. The runtime adapter and voice HTTP bridge live at the repository root because the Discord application imports and runs them; this folder is for offline RAG build tools only.
-

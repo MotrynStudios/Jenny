@@ -41,6 +41,40 @@ def _metadata_text(value: Any, default: str = "") -> str:
     return str(value).strip()
 
 
+def _strip_jsonc_comments(content: str) -> str:
+    """Remove // and /* */ comments while preserving quoted JSON strings."""
+    result, index, quoted, escaped = [], 0, False, False
+    while index < len(content):
+        char = content[index]
+        if quoted:
+            result.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                quoted = False
+            index += 1
+            continue
+        if char == '"':
+            quoted = True
+            result.append(char)
+            index += 1
+        elif char == "/" and index + 1 < len(content) and content[index + 1] == "/":
+            while index < len(content) and content[index] not in "\r\n":
+                index += 1
+        elif char == "/" and index + 1 < len(content) and content[index + 1] == "*":
+            index += 2
+            while index + 1 < len(content) and content[index:index + 2] != "*/":
+                result.append("\n" if content[index] == "\n" else " ")
+                index += 1
+            index = min(len(content), index + 2)
+        else:
+            result.append(char)
+            index += 1
+    return re.sub(r",\s*([}\]])", r"\1", "".join(result))
+
+
 @dataclass
 class ModMetadata:
     """Metadata extracted from mod JAR files"""
@@ -62,6 +96,7 @@ class ModData:
     advancements: List[Dict[str, Any]]  # Achievement data
     items: List[str]  # Item names from language files
     blocks: List[str]  # Block names from language files
+    gun_data: List[Dict[str, Any]]  # TaCZ custom gunpack stats and attachment data
 
 
 class ModpackExtractor:
@@ -89,7 +124,7 @@ class ModpackExtractor:
         return jar_files
     
     def extract_mod_metadata(self, jar_path: Path) -> Optional[ModMetadata]:
-        """Extract metadata from neoforge.mods.toml or mods.toml"""
+        """Read Forge/NeoForge TOML or Fabric/Quilt JSON metadata."""
         try:
             with zipfile.ZipFile(jar_path, 'r') as jar:
                 # Try different possible locations for mods.toml
@@ -106,6 +141,28 @@ class ModpackExtractor:
                         break
                 
                 if not mods_toml_path:
+                    for json_path in ("fabric.mod.json", "quilt.mod.json"):
+                        if json_path not in jar.namelist():
+                            continue
+                        with jar.open(json_path) as source:
+                            document = json.load(source)
+                        if json_path == "fabric.mod.json":
+                            mod_id = _metadata_text(document.get("id"), jar_path.stem)
+                            version = _metadata_text(document.get("version"), "unknown")
+                            display_name = _metadata_text(document.get("name"), mod_id)
+                            authors_value = document.get("authors", [])
+                            authors = [_metadata_text(a.get("name") if isinstance(a, dict) else a) for a in authors_value] if isinstance(authors_value, list) else []
+                            description = _metadata_text(document.get("description"))
+                        else:
+                            quilt = document.get("quilt_loader", {})
+                            metadata = quilt.get("metadata", {})
+                            mod_id = _metadata_text(quilt.get("id"), jar_path.stem)
+                            version = _metadata_text(quilt.get("version"), "unknown")
+                            display_name = _metadata_text(metadata.get("name"), mod_id)
+                            authors_value = metadata.get("contributors", {})
+                            authors = [str(value) for value in authors_value.values()] if isinstance(authors_value, dict) else []
+                            description = _metadata_text(metadata.get("description"))
+                        return ModMetadata(mod_id, version, display_name, description, authors, [], str(jar_path))
                     # Try to extract mod ID from filename as fallback
                     filename = jar_path.stem
                     mod_id = re.sub(r'[-0-9.]+$', '', filename).replace('-', '_')
@@ -268,6 +325,33 @@ class ModpackExtractor:
             logger.warning(f"Error extracting advancements from {jar_path.name}: {e}")
         
         return advancements
+
+    def extract_tacz_gun_data(self, jar_path: Path) -> List[Dict[str, Any]]:
+        """Extract TaCZ custom gunpack JSON stat records (not models or textures)."""
+        records = []
+        pattern = re.compile(r"assets/tacz/custom/([^/]+)/data/tacz/data/(guns|ammo|attachments)/(.+?)\.json$", re.I)
+        try:
+            with zipfile.ZipFile(jar_path, "r") as jar:
+                for file_path in jar.namelist():
+                    match = pattern.match(file_path)
+                    if not match:
+                        continue
+                    pack_name, category, basename = match.groups()
+                    basename = basename.replace("/", "__")
+                    try:
+                        with jar.open(file_path) as source:
+                            data = json.loads(_strip_jsonc_comments(source.read().decode("utf-8-sig")))
+                        if not isinstance(data, dict):
+                            continue
+                        data.update({"_pack_name": pack_name, "_category": category,
+                                     "_data_id": basename, "_file_path": file_path,
+                                     "_source_mod": "tacz"})
+                        records.append(data)
+                    except (UnicodeDecodeError, json.JSONDecodeError, OSError) as error:
+                        logger.warning("Could not parse TaCZ data %s in %s: %s", file_path, jar_path.name, error)
+        except (OSError, zipfile.BadZipFile) as error:
+            logger.warning("Could not inspect TaCZ data in %s: %s", jar_path.name, error)
+        return records
     
     def extract_items_and_blocks(self, language_data: Dict[str, str]) -> tuple[List[str], List[str]]:
         """Extract item and block names from language data"""
@@ -296,6 +380,9 @@ class ModpackExtractor:
         language_data = self.extract_language_data(jar_path, metadata.mod_id)
         recipes = self.extract_recipes(jar_path, metadata.mod_id)
         advancements = self.extract_advancements(jar_path, metadata.mod_id)
+        # Custom gunpacks can be separate JARs with their own mod IDs, so scan
+        # every archive for the TaCZ resource-data path, not just the core mod.
+        gun_data = self.extract_tacz_gun_data(jar_path)
         items, blocks = self.extract_items_and_blocks(language_data)
         
         return ModData(
@@ -304,7 +391,8 @@ class ModpackExtractor:
             recipes=recipes,
             advancements=advancements,
             items=items,
-            blocks=blocks
+            blocks=blocks,
+            gun_data=gun_data
         )
     
     def save_mod_data(self, mod_data: ModData):
@@ -334,6 +422,10 @@ class ModpackExtractor:
             advancements_path = mod_dir / "advancements.json"
             with open(advancements_path, 'w', encoding='utf-8') as f:
                 json.dump(mod_data.advancements, f, indent=2, ensure_ascii=False)
+
+        if mod_data.gun_data:
+            with open(mod_dir / "gun_data.json", "w", encoding="utf-8") as f:
+                json.dump(mod_data.gun_data, f, indent=2, ensure_ascii=False)
         
         # Save items and blocks
         items_blocks_path = mod_dir / "items_blocks.json"
@@ -362,6 +454,7 @@ class ModpackExtractor:
                 'recipes_count': len(mod_data.recipes),
                 'advancements_count': len(mod_data.advancements)
             }
+            mod_summary['gun_data_count'] = len(mod_data.gun_data)
             summary['mods'].append(mod_summary)
         
         summary_path = self.output_dir / "modpack_summary.json"
@@ -463,4 +556,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

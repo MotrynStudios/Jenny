@@ -234,6 +234,41 @@ def init_database() -> None:
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_image_context_user_time ON image_context_cache(guild_id, user_id, created_at)")
 
+    # Cache the last structured command result per person and conversation so
+    # natural follow-ups such as "more" can continue a pager or trivia round.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS command_output_cache (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            guild_id TEXT,
+            channel_id TEXT,
+            conversation_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            title TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            page_index INTEGER NOT NULL DEFAULT 0,
+            message_id TEXT,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_command_output_scope ON command_output_cache(user_id, conversation_id, created_at)")
+
+    # Trivia scores are server-scoped and only include people who have played.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS trivia_scores (
+            guild_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            username TEXT NOT NULL,
+            points INTEGER NOT NULL DEFAULT 0,
+            games_played INTEGER NOT NULL DEFAULT 0,
+            games_won INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (guild_id, user_id)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_trivia_leaderboard ON trivia_scores(guild_id, points DESC, games_won DESC)")
+
     # A member's roles and join date are server-specific. Keep the old table
     # readable for migration, but write new data to the guild-keyed table.
     cursor.execute("""
@@ -1793,6 +1828,113 @@ def get_voice_messages_for_maintenance(guild_id: str, limit: int = 100) -> List[
     ]
 
 
+def save_command_output(user_id: str, guild_id: Optional[str], channel_id: str,
+                        conversation_id: str, kind: str, title: str,
+                        payload: Dict[str, Any], message_id: Optional[str] = None,
+                        ttl_hours: int = 24) -> int:
+    """Persist a bounded command result for follow-up messages and pagers."""
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(hours=max(1, ttl_hours))
+    conn = get_connection()
+    cursor = conn.execute(
+        """INSERT INTO command_output_cache
+           (user_id, guild_id, channel_id, conversation_id, kind, title,
+            payload_json, page_index, message_id, created_at, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)""",
+        (str(user_id), str(guild_id) if guild_id else None, str(channel_id),
+         conversation_id, kind, title, json.dumps(payload, ensure_ascii=False),
+         str(message_id) if message_id else None, now.isoformat(), expires_at.isoformat()),
+    )
+    # Keep only a short trail; detailed raw chat history has separate retention.
+    conn.execute("DELETE FROM command_output_cache WHERE expires_at < ?", (now.isoformat(),))
+    record_id = int(cursor.lastrowid)
+    conn.commit()
+    conn.close()
+    return record_id
+
+
+def get_latest_command_output(user_id: str, conversation_id: str,
+                              max_age_hours: int = 24) -> Optional[Dict[str, Any]]:
+    """Fetch the user's latest still-relevant structured command output."""
+    now = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(hours=max_age_hours)).isoformat()
+    conn = get_connection()
+    row = conn.execute(
+        """SELECT * FROM command_output_cache
+           WHERE user_id = ? AND conversation_id = ? AND expires_at > ? AND created_at > ?
+           ORDER BY created_at DESC, id DESC LIMIT 1""",
+        (str(user_id), conversation_id, now.isoformat(), cutoff),
+    ).fetchone()
+    conn.close()
+    if not row:
+        return None
+    result = dict(row)
+    try:
+        result["payload"] = json.loads(result.pop("payload_json"))
+    except (TypeError, json.JSONDecodeError):
+        return None
+    return result
+
+
+def set_command_output_page(record_id: int, page_index: int) -> None:
+    """Remember which page the user last saw for context-aware follow-ups."""
+    conn = get_connection()
+    conn.execute("UPDATE command_output_cache SET page_index = ? WHERE id = ?",
+                 (max(0, int(page_index)), int(record_id)))
+    conn.commit()
+    conn.close()
+
+
+def update_command_output(record_id: int, payload: Dict[str, Any],
+                          title: Optional[str] = None) -> None:
+    """Refresh a saved command result after a trivia round or page transition."""
+    conn = get_connection()
+    if title is None:
+        conn.execute("UPDATE command_output_cache SET payload_json = ? WHERE id = ?",
+                     (json.dumps(payload, ensure_ascii=False), int(record_id)))
+    else:
+        conn.execute("UPDATE command_output_cache SET payload_json = ?, title = ? WHERE id = ?",
+                     (json.dumps(payload, ensure_ascii=False), title, int(record_id)))
+    conn.commit()
+    conn.close()
+
+
+def record_trivia_game(guild_id: str, player_scores: Dict[str, Dict[str, Any]],
+                       winners: List[str]) -> None:
+    """Add one completed server trivia game to every participant's lifetime totals."""
+    now = datetime.now(timezone.utc).isoformat()
+    conn = get_connection()
+    for user_id, data in player_scores.items():
+        conn.execute(
+            """INSERT INTO trivia_scores (guild_id, user_id, username, points, games_played, games_won, updated_at)
+               VALUES (?, ?, ?, ?, 1, ?, ?)
+               ON CONFLICT(guild_id, user_id) DO UPDATE SET
+                 username=excluded.username,
+                 points=trivia_scores.points + excluded.points,
+                 games_played=trivia_scores.games_played + 1,
+                 games_won=trivia_scores.games_won + excluded.games_won,
+                 updated_at=excluded.updated_at""",
+            (str(guild_id), str(user_id), str(data.get("username") or user_id),
+             int(data.get("points") or 0), 1 if str(user_id) in winners else 0, now),
+        )
+    conn.commit()
+    conn.close()
+
+
+def get_trivia_leaderboard(guild_id: str, limit: int = 100) -> List[Dict[str, Any]]:
+    """Return players who have participated in this server's trivia games."""
+    conn = get_connection()
+    rows = conn.execute(
+        """SELECT user_id, username, points, games_played, games_won, updated_at
+           FROM trivia_scores WHERE guild_id = ?
+           ORDER BY points DESC, games_won DESC, games_played ASC, username COLLATE NOCASE ASC
+           LIMIT ?""",
+        (str(guild_id), max(1, min(int(limit), 500))),
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
 # Changelog functions
 def add_changelog_entry(version: str, description: str, features: List[str], changes: List[str], entry_type: str = "release") -> None:
     """Add a changelog entry"""
@@ -1851,9 +1993,15 @@ def initialize_changelog() -> None:
     """Ensure the current public release entry exists without deleting history."""
     try:
         add_changelog_entry(
-            version="0.88",
-            description="Jenny 0.88 repository release with the 0.87 chat, vision, retrieval, and activity features",
+            version="0.89",
+            description="Jenny 0.89 adds paged command results, contextual output memory, timed mod trivia, recipe cards, and TaCZ stat extraction",
             features=[
+                "Paged embed output for large command results, with saved pages for more/next follow-ups",
+                "Context-aware saved command and trivia outputs stored in SQLite for the current conversation",
+                "Timed solo and multiplayer mod trivia, selectable difficulty, first-correct scoring, round limits, replay, and server leaderboard",
+                "Recipe lookup cards with shaped crafting grids and optional standalone recipe messages",
+                "TaCZ gun, ammunition, and attachment stats extracted from JSONC gunpack data and indexed for retrieval",
+                "Fabric and Quilt mod metadata parsing in addition to Forge and NeoForge metadata",
                 "Mention-triggered server chat and natural conversations in direct messages",
                 "Voice conversations with speech recognition, spoken replies, and chat, voice, or both reply modes",
                 "Image and animated GIF understanding, plus image context for follow-up conversations",
@@ -1907,7 +2055,7 @@ def initialize_changelog() -> None:
             ],
             entry_type="release",
         )
-        print("[Changelog] Current release entry ensured at version 0.88")
+        print("[Changelog] Current release entry ensured at version 0.89")
     except Exception as error:
         print(f"[Changelog] Error initializing changelog: {error}")
 
