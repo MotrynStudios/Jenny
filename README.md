@@ -2,6 +2,8 @@
 
 Jenny is a multi-server Discord bot with persistent chat context, searchable server history, Minecraft mod and config retrieval, image/GIF analysis, and an optional voice companion service. Guild settings, profiles, usage totals, and channel memories stay scoped to their server. A person's long-term memory follows their stable Discord user ID across DMs, server text, and voice, while short conversation histories remain separate by conversation.
 
+Jenny uses the Jenny Belle character profile in `Jenny/Prompts.py`: a 19-year-old freelancer from Long Beach, Los Angeles, who has played Minecraft since 2018. She likes relaxed chats, creative projects, cats, and clever jokes; she dislikes bullying, needless drama, and confident guessing. She is written to sound relaxed and personable while being transparent that Jenny is an AI bot when asked. Server text and voice prompts include the current speaker's and Jenny's live server roles; DM prompts do not have server roles.
+
 > **License status:** This project does not yet include a license. Until its owner selects one, GitHub visitors can view the code but do not have an explicit license grant to reuse or redistribute it.
 
 The bot grounds Minecraft claims in the local mod/config corpus configured for that Jenny installation. At present, one installation has one shared RAG index for every Discord server it serves. If different servers use different modpacks, run separate bot installations or keep that limitation in mind; per-guild indexes are not implemented yet. When local evidence is missing, Jenny can use web search for background and labels it as external rather than treating it as proof of the installed pack. This reduces unsupported claims; no language model can guarantee zero hallucinations, so review high impact answers and tune retrieval against your own files.
@@ -79,6 +81,8 @@ At runtime, vector retrieval is limited to Minecraft/mod/config questions and sh
 - Search recent stored server chat and summarize channels.
 - Answer server, member, profile-history, last-message, and token-usage questions; `/help` privately lists commands available to the caller, `/serverinfo` shows activity windows, and `/user` shows member stats.
 - Show member avatars and roles. Assign and remove roles only when the requester is an administrator, outranks the role, and Jenny also has Manage Roles and outranks it.
+- Include the current speaker's and Jenny's actual guild roles in server text and voice context, so role-aware answers use live server information.
+- Show a Minecraft Singleplayer 26.3 Playing activity with elapsed time in the title, refreshed once per minute and reset when the Python bot restarts.
 - Analyze attached and replied-to images. Animated GIFs are sampled at up to three frames before their visual evidence is passed to the chat model. Recent image context can be reused during text and voice follow-ups.
 - Transcribe voice-message attachments posted in Jenny's configured channel.
 - Send incoming server messages, Jenny's generated replies, and profile events to the selected logs channel. Direct messages stay private in the local database.
@@ -98,7 +102,9 @@ Server text summaries are scoped to their text channel; voice summaries are scop
 
 The default 90-day cleanup removes old detailed message, voice, usage, profile-history, image-context, and short conversation-history records. Rolling summaries are retained until the user clears their memory with `/forgetmydata` or an administrator clears their history. This lets Jenny remember useful context without keeping every raw conversation indefinitely.
 
-See [CHANGELOG.md](CHANGELOG.md) for Jenny's current 0.83 feature list. Discord does not expose members' private profile bios through the bot API.
+See [CHANGELOG.md](CHANGELOG.md) for Jenny's current 0.84 feature list. Discord does not expose members' private profile bios through the bot API.
+
+The activity is a bot-supported Playing status, not the full Rich Presence integration available to desktop games. The elapsed time is shown as text and advances once per minute.
 
 Memory and searchable logs are stored locally in SQLite (`Jenny/memory.db`). They are not shared across installations. Users with access to the host can access that database, so apply appropriate filesystem and backup controls.
 
@@ -113,7 +119,7 @@ Memory and searchable logs are stored locally in SQLite (`Jenny/memory.db`). The
 ## Project layout
 
 ```text
-Jenny/                    Discord bot, prompts, SQLite memory, and commands
+Jenny/                    Discord bot, prompts, SQLite memory, commands, and game activity
 tools/rag/                One-time mod/config extraction, processing, and index build tools
 voice_service/            Optional Node voice capture, transcription, and speech playback
 jenny_api_server.py       Always-running local HTTP bridge used by the voice process

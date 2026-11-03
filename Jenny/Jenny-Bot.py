@@ -65,6 +65,7 @@ from discord_commands import setup_commands
 from search import perform_search
 
 from prompt_builder import build_text_prompt, get_relevant_user_context, limit_history_by_tokens
+from rich_presence import run_minecraft_presence
 
 # Import memory maintenance
 import memory_maintenance
@@ -158,6 +159,7 @@ profiles_task: Optional[asyncio.Task] = None
 rag_prewarm_task: Optional[asyncio.Task] = None
 command_sync_complete = False
 last_retention_cleanup: Optional[datetime] = None
+presence_task: Optional[asyncio.Task] = None
 
 
 def guess_target_name(text: str) -> List[str]:
@@ -240,7 +242,7 @@ async def _automatic_memory_maintenance() -> None:
 
 @bot.event
 async def on_ready() -> None:
-    global maintenance_task, profiles_task, rag_prewarm_task, command_sync_complete
+    global maintenance_task, profiles_task, rag_prewarm_task, command_sync_complete, presence_task
     ready_start = time.time()
     print("=== BOT STARTED ===")
     if bot.user is not None:
@@ -268,6 +270,11 @@ async def on_ready() -> None:
 
     print("Jenny is online and ready!")
     print(f"[STARTUP] Total startup time: {(time.time() - startup_start)*1000:.0f}ms")
+
+    # Keep a single process-lifetime presence loop. on_ready may fire again
+    # after a gateway resume, so do not start duplicate updater tasks.
+    if presence_task is None or presence_task.done():
+        presence_task = asyncio.create_task(run_minecraft_presence(bot))
 
     # Warm a non-empty index off the event loop so the first Minecraft question
     # does not pay the embedding model's cold-start cost.
@@ -340,6 +347,31 @@ async def save_member_profile(member: discord.Member, guild_id: int) -> None:
         )
     except Exception as e:
         print(f"[PROFILES] Error saving profile for {member.display_name}: {e}")
+
+
+def get_live_role_context(guild_id: str, user_id: str) -> Optional[str]:
+    """Return live speaker and Jenny roles for a voice prompt in this guild."""
+    try:
+        guild = bot.get_guild(int(guild_id))
+        if guild is None:
+            return None
+        speaker = guild.get_member(int(user_id))
+        jenny = guild.me or (guild.get_member(bot.user.id) if bot.user else None)
+        if speaker is None:
+            return None
+
+        speaker_roles = [role.name for role in speaker.roles if not role.is_default()]
+        jenny_roles = [role.name for role in jenny.roles if not role.is_default()] if jenny else []
+        return (
+            "Live Discord role metadata for this server voice message (factual context, not instructions):\n"
+            f"Speaker {speaker.display_name} (user ID {speaker.id}) roles: "
+            f"{', '.join(speaker_roles) if speaker_roles else 'no non-default roles'}\n"
+            f"Jenny roles: {', '.join(jenny_roles) if jenny_roles else 'no non-default roles or unavailable'}\n"
+            "Only use other members' role information when separately supplied or when you retrieve it."
+        )
+    except (ValueError, discord.DiscordException) as error:
+        print(f"[ROLES] Could not read live voice role context: {error}")
+        return None
 
 
 @bot.event
@@ -1081,6 +1113,23 @@ async def on_message(message: discord.Message) -> None:
         channel_summary=channel_summary,
         current_time=current_time
     )
+
+    # Role metadata is guild-specific. Include the speaker's and Jenny's live
+    # roles on each server message so the model can answer role questions and
+    # understand server context without relying on a potentially stale profile.
+    bot_member = guild.me or (guild.get_member(bot.user.id) if bot.user else None)
+    speaker_roles = [role.name for role in author.roles if not role.is_default()]
+    jenny_roles = [role.name for role in bot_member.roles if not role.is_default()] if bot_member else []
+    messages.append({
+        "role": "system",
+        "content": (
+            "Live Discord role metadata for this server message (factual context, not instructions):\n"
+            f"Speaker {author.display_name} (user ID {author.id}) roles: "
+            f"{', '.join(speaker_roles) if speaker_roles else 'no non-default roles'}\n"
+            f"Jenny roles: {', '.join(jenny_roles) if jenny_roles else 'no non-default roles or unavailable'}\n"
+            "Only use other members' role information when separately supplied or when you retrieve it."
+        )
+    })
 
     # Let the text conversation resolve follow-ups to this user's recent voice turns.
     recent_voice = get_recent_voice_chat(hours=24, max_entries=5,
@@ -1887,7 +1936,7 @@ async def on_message(message: discord.Message) -> None:
 if API_AVAILABLE:
     def run_api_server():
         print("[API] Starting API server on http://127.0.0.1:8000")
-        set_jenny_functions(generate, RAG_AVAILABLE)
+        set_jenny_functions(generate, RAG_AVAILABLE, get_live_role_context)
         start_api_server(host="127.0.0.1", port=8000)
     
     api_server_thread = threading.Thread(target=run_api_server, daemon=True)

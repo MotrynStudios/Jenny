@@ -1,5 +1,14 @@
 # Jenny changelog
 
+## 0.84
+
+### Added and improved
+
+- Added Jenny Belle's supplied character background and clear, natural likes and dislikes to the shared chat and voice persona prompt.
+- Added the current speaker's and Jenny's live server roles to server text and voice conversation prompts, with other members' roles still retrieved only when relevant.
+- Added a Minecraft Singleplayer 26.3 Playing activity with an elapsed session timer in its title. The timer refreshes once a minute and resets when the bot process restarts.
+- Updated the README and runtime changelog to match the current profile, role context, and activity behavior.
+
 ## 0.83
 
 ### Fixed and improved

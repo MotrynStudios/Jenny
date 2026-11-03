@@ -1738,8 +1738,8 @@ def initialize_changelog() -> None:
     """Ensure the current public release entry exists without deleting history."""
     try:
         add_changelog_entry(
-            version="0.83",
-            description="Jenny 0.83 RAG extraction and indexing reliability",
+            version="0.84",
+            description="Jenny 0.84 character, server role context, and live activity",
             features=[
                 "Conversational chat in the configured main channel, direct messages, and server mentions or replies",
                 "Voice conversations with speech recognition, spoken replies, and chat, voice, or both reply modes",
@@ -1758,7 +1758,9 @@ def initialize_changelog() -> None:
                 "Persistent Python, Node, and structured voice-turn logs with bounded retention",
                 "Voice service status and clear error replies when a connected feature is unavailable",
                 "Configured primary and backup provider fallbacks",
-                "Personable concise chat and original playful song responses"
+                "Personable concise chat and original playful song responses",
+                "Jenny Belle character profile and live speaker/Jenny role metadata in server chat prompts",
+                "Minecraft singleplayer 26.3 Playing activity with a restart-resetting elapsed session title"
             ],
             changes=[
                 "Reduced automatic memory summaries to bounded batches, added a smaller retry for malformed output, and added persistent exponential backoff after repeated failures",
@@ -1773,7 +1775,7 @@ def initialize_changelog() -> None:
             ],
             entry_type="release",
         )
-        print("[Changelog] Current release entry ensured at version 0.83")
+        print("[Changelog] Current release entry ensured at version 0.84")
     except Exception as error:
         print(f"[Changelog] Error initializing changelog: {error}")
 
