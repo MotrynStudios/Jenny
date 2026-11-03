@@ -146,7 +146,9 @@ def init_database() -> None:
             key TEXT PRIMARY KEY,
             value TEXT
         )
-    """)    # Guild configuration is isolated by server. The legacy settings table is
+    """)
+
+    # Guild configuration is isolated by server. The legacy settings table is
     # retained only for installation-wide defaults during migration.
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS guild_settings (
@@ -895,6 +897,8 @@ def get_dm_text_for_maintenance(session_id: str, after_id: int = 0, limit: int =
     """, (session_id, after_id, limit)).fetchall()
     conn.close()
     return [dict(row) for row in rows]
+
+
 def get_dm_voice_for_maintenance(session_id: str, after_id: int = 0, limit: int = 100) -> List[Dict[str, Any]]:
     conn = get_connection()
     rows = conn.execute("""
@@ -1042,7 +1046,9 @@ def get_recent_dm_voice(hours: int = 24, max_entries: int = 50, user_id: str = N
         """, (cutoff, max_entries))
 
     rows: List[sqlite3.Row] = cursor.fetchall()
-    conn.close()    return [dict(row) for row in rows]
+    conn.close()
+
+    return [dict(row) for row in rows]
 
 
 def get_recent_voice_chat(hours: int = 1, max_entries: int = 50,
@@ -1191,6 +1197,8 @@ def get_main_channel_id(guild_id: Optional[str] = None) -> Optional[str]:
 def set_main_channel_id(channel_id: str, guild_id: Optional[str] = None) -> None:
     """Set the main channel ID"""
     set_setting("main_channel_id", str(channel_id), guild_id=guild_id)
+
+
 # Convenience functions for logs channel
 def get_logs_channel_id(guild_id: Optional[str] = None) -> Optional[str]:
     """Get the configured logs channel ID"""
@@ -1638,6 +1646,8 @@ def get_messages_for_maintenance(channel_id: str, limit: int = 100) -> List[Dict
         }
         for row in rows
     ]
+
+
 def get_voice_messages_for_maintenance(guild_id: str, limit: int = 100) -> List[Dict[str, Any]]:
     """Get voice messages that need to be processed for memory maintenance"""
     conn: sqlite3.Connection = get_connection()
