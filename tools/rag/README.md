@@ -27,17 +27,18 @@ For a launcher or server instance elsewhere, pass its actual directories to the 
 
 ## What gets read
 
-- Mod JARs are ZIP archives. Jenny reads Forge/NeoForge `META-INF/*mods.toml`, Fabric `fabric.mod.json`, Quilt `quilt.mod.json`, English language JSON under `assets/<mod-id>/lang/`, and recipe and advancement JSON under `data/<mod-id>/recipe(s)/` and `advancement(s)/`.
-- TaCZ JSONC gunpack records for guns, ammunition, and attachments are extracted from `assets/tacz/custom/` and indexed as text stats. This does not include 3D models, textures, or arbitrary custom data formats used by other mods.
+- Mod JARs are ZIP archives. Jenny reads Forge/NeoForge `META-INF/*mods.toml`, Fabric `fabric.mod.json`, Quilt `quilt.mod.json`, and legacy Forge `mcmod.info`. English localization is merged from JSON and old `.lang` files across resource namespaces.
+- Recipe and advancement JSON is read from singular and plural Minecraft data folders across namespaces, including namespaces that differ from a loader mod ID. JSON up to 1 MB per file in common datapack data and mod-owned `assets/*/custom/*/data/` folders is also flattened and indexed, with a 500-record per-archive cap. TaCZ gunpack JSONC remains parsed into typed gun, ammunition, and attachment stats.
+- Texture filenames and model-to-texture references are indexed as a compact asset manifest. Image bytes and visual appearance are not embedded; answering what an image depicts would require a separate local vision-captioning or image-embedding stage.
 - Text config files are read recursively. Supported extensions are `.toml`, `.json`, `.json5`, `.yaml`, `.yml`, `.properties`, `.cfg`, `.conf`, `.ini`, `.snbt`, and `.txt`.
 - Files over 2 MB and binary files are skipped. `.bak` files are skipped because their extension is unsupported. Config text is indexed as text; the builder does not evaluate config expressions or infer runtime behavior.
 - Common credential-looking values are redacted before indexing, but this is best-effort. Review generated files before sharing them.
 
 ## Coverage and limits
 
-Extraction is format-driven, not a universal mod API. Minecraft versions change folder names and schemas; the extractor handles both singular and plural recipe/advancement folders but does not validate game-version or loader constraints. Forge/NeoForge, Fabric, and Quilt metadata are recognized. Common text configs are indexed as text with best-effort credential redaction. Custom binary databases, generated runtime recipes, and proprietary mod-specific config encodings are not interpreted automatically. Add a focused parser for a mod when its content does not use standard data-pack files.
+Extraction is format-driven, not a universal mod API. Minecraft versions change folder names and schemas; the extractor handles singular and plural recipe/advancement folders but does not validate game-version or loader constraints. Forge/NeoForge, Fabric, Quilt, and legacy Forge metadata are recognized. Common text configs are indexed as text with best-effort credential redaction. Custom binary databases, generated runtime recipes, and proprietary mod-specific encodings are not interpreted automatically. Add a focused parser when a mod's content does not use the covered JSON or text layouts.
 
-The Timeless & Classics Guns (TaCZ) core JAR stores gun data in a custom gunpack under `assets/tacz/custom/<pack>/data/tacz/data/`. Jenny extracts its JSONC stat records and indexes the numeric values. The standard recipe count only includes standard data-pack recipe files. TaCZ's custom workbench and gunpack composition are not ordinary crafting-table recipes, so `/recipe` may not return a usable recipe for a gun.
+The Timeless & Classics Guns (TaCZ) core JAR stores gun data in a custom gunpack under `assets/tacz/custom/<pack>/data/tacz/data/`. Jenny extracts its JSONC stat records and indexes the numeric values. Similar structured JSON in supported custom data folders is also indexed, although each mod can use its own schema. The standard recipe count only includes standard data-pack recipe files. TaCZ's custom workbench and gunpack composition are not ordinary crafting-table recipes, so `/recipe` may not return a usable recipe for a gun.
 
 One bot installation has one shared index for every Discord server it serves. Different pack corpora currently need separate installations; per-server index selection is not implemented.
 

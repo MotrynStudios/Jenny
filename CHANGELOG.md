@@ -1,5 +1,28 @@
 # Jenny changelog
 
+## 0.91
+
+### Fixed
+
+- Fixed memory attribution and duplicate scoped records; Jenny's replies, persona, and temporary command requests no longer become user memories.
+- Fixed trivia crashes on older list-shaped manifests, item data, and recipe result formats.
+
+### Improved
+
+- Unified activity and usage ranges as Daily, Weekly, and Monthly; Jenny now uses nearby channel context for short follow-ups and sharper, more varied banter.
+- Deferred RAG imports and embedding startup by default; Gemini now leads background memory maintenance, with existing provider fallbacks retained.
+- Expanded mod data parsing across resource namespaces and legacy Forge localization and metadata.
+
+### Added
+
+- Added searchable structured custom JSON and a compact texture/model asset manifest for mod resources.
+- Added name-based role requests with exact matching, ambiguity prompts, hierarchy checks, and server interaction audit logs.
+- Added human-readable speaker names to stored history while retaining API-required `user` and `assistant` roles.
+
+### Removed
+
+- Removed ordinary unrelated chat copies from configured logs channels; direct Jenny conversations, commands, profile changes, and errors are still logged.
+
 ## 0.90
 
 ### Fixed

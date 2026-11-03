@@ -48,12 +48,32 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DM_COMMANDS = {"help", "changelog", "health", "mods", "trivia", "recipe", "mymemory", "forgetmydata", "myusage"}
 
 
+def make_notice_embed(content: str) -> discord.Embed:
+    """Give short command status and error replies the same embed treatment."""
+    text = str(content or "")
+    lowered = text.casefold()
+    is_error = any(marker in lowered for marker in (
+        "couldn't", "could not", "cannot", "can't", "failed", "error", "denied",
+        "doesn't", "not available", "not have", "not recorded", "no one has",
+        "i need ", "i couldn't", "i cannot", "blocked", "unavailable", "only ",
+        "must be", "server-specific", "not in a server",
+    ))
+    return discord.Embed(
+        title="Command error" if is_error else "Jenny",
+        description=text[:4000],
+        color=discord.Color.red() if is_error else discord.Color.blurple(),
+    )
+
+
 def _read_pack_mods():
     """Load only the locally extracted mod list used by pack-grounded tools."""
     summary_path = PROJECT_ROOT / "data" / "modpack_summary.json"
     try:
         data = json.loads(summary_path.read_text(encoding="utf-8"))
-        mods = data.get("mods", [])
+        # Some older extractors wrote the mod roster as a bare JSON array.
+        mods = data if isinstance(data, list) else data.get("mods", []) if isinstance(data, dict) else []
+        if not isinstance(mods, list):
+            return []
         return [item for item in mods if isinstance(item, dict) and item.get("display_name")]
     except (OSError, json.JSONDecodeError, TypeError) as error:
         print(f"[PACK] Could not read local mod list at {summary_path}: {error}")
@@ -105,7 +125,7 @@ class PagedEmbedView(discord.ui.View):
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("Open your own result with the command to page through it.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("Open your own result with the command to page through it."), ephemeral=True)
             return False
         return True
 
@@ -128,7 +148,7 @@ class PagedEmbedView(discord.ui.View):
 
     @discord.ui.button(label="1/1", style=discord.ButtonStyle.primary)
     async def page_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(f"Page {self.page + 1} of {len(self.pages)}", ephemeral=True)
+        await interaction.response.send_message(embed=make_notice_embed(f"Page {self.page + 1} of {len(self.pages)}"), ephemeral=True)
 
     @discord.ui.button(label="Next", style=discord.ButtonStyle.secondary)
     async def next(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -261,18 +281,21 @@ async def send_more_from_cache(message: discord.Message, user_id: str,
     payload = cached.get("payload") or {}
     if cached.get("kind") == "trivia":
         if payload.get("status") == "active":
-            await message.reply("We're still in the middle of that round. Pick an answer on the trivia message.", mention_author=False)
+            if payload.get("mode") == "solo":
+                await start_cached_trivia_question(message, cached)
+            else:
+                await message.reply(embed=make_notice_embed("We're still in the middle of that group round. Pick an answer on the trivia message."), mention_author=False)
         elif payload.get("status") == "awaiting_next":
             await start_cached_trivia_question(message, cached)
         else:
-            await message.reply("That trivia game has ended. Say 'trivia' to start another one, or use /trivialeaderboard to see the scores.", mention_author=False)
+            await message.reply(embed=make_notice_embed("That trivia game has ended. Say 'trivia' to start another one, or use /trivialeaderboard to see the scores."), mention_author=False)
         return True
     pages = payload.get("pages") or []
     if len(pages) <= 1:
         return False
     page = min(len(pages) - 1, int(cached.get("page_index") or 0) + 1)
     if page == int(cached.get("page_index") or 0):
-        await message.reply("That's the last page. The buttons on the result still work.", mention_author=False)
+        await message.reply(embed=make_notice_embed("That's the last page. The buttons on the result still work."), mention_author=False)
         return True
     embeds = [discord.Embed.from_dict(item) for item in pages]
     view = PagedEmbedView(embeds, message.author.id, page, int(cached["id"]))
@@ -340,7 +363,7 @@ class ChangelogPageView(discord.ui.View):
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("Run /changelog to open your own history pager.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("Run /changelog to open your own history pager."), ephemeral=True)
             return False
         return True
 
@@ -401,10 +424,10 @@ class ChangelogJumpModal(discord.ui.Modal, title="Go to changelog page"):
         try:
             requested = int(str(self.page_number.value).strip())
         except ValueError:
-            await interaction.response.send_message("Enter a whole page number.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("Enter a whole page number."), ephemeral=True)
             return
         if requested < 1 or requested > len(self.pager.entries):
-            await interaction.response.send_message(f"Choose a page from 1 to {len(self.pager.entries)}.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed(f"Choose a page from 1 to {len(self.pager.entries)}."), ephemeral=True)
             return
         self.pager.page = requested - 1
         self.pager._refresh()
@@ -422,13 +445,37 @@ def _trivia_candidates() -> list[dict[str, str]]:
         recipe_file = PROJECT_ROOT / "data" / "raw_data" / mod_id / "recipes.json"
         try:
             items_data = json.loads(item_file.read_text(encoding="utf-8"))
-            items = [str(value) for value in (items_data.get("items", []) + items_data.get("blocks", []))]
+            if isinstance(items_data, list):
+                # Early extraction formats stored a single flat item list.
+                item_values = items_data
+            elif isinstance(items_data, dict):
+                item_values = []
+                for key in ("items", "blocks"):
+                    values = items_data.get(key, [])
+                    if isinstance(values, list):
+                        item_values.extend(values)
+            else:
+                item_values = []
+            items = [str(value) for value in item_values] if isinstance(item_values, list) else []
         except (OSError, json.JSONDecodeError, TypeError):
             items = []
         try:
             recipes = json.loads(recipe_file.read_text(encoding="utf-8"))
-            outputs = [str((recipe.get("result") or {}).get("item") or (recipe.get("result") or {}).get("id") or "")
-                       for recipe in recipes if isinstance(recipe, dict)]
+            recipes = recipes if isinstance(recipes, list) else recipes.get("recipes", []) if isinstance(recipes, dict) else []
+            outputs = []
+            for recipe in recipes:
+                if not isinstance(recipe, dict):
+                    continue
+                result = recipe.get("result")
+                if isinstance(result, dict):
+                    output = result.get("item") or result.get("id")
+                elif isinstance(result, list):
+                    output = next((entry.get("item") or entry.get("id") for entry in result
+                                   if isinstance(entry, dict) and (entry.get("item") or entry.get("id"))), None)
+                else:
+                    output = result
+                if output:
+                    outputs.append(str(output))
         except (OSError, json.JSONDecodeError, TypeError):
             outputs = []
         candidates.append({
@@ -492,21 +539,21 @@ class TriviaNextView(discord.ui.View):
     @discord.ui.button(label="Next question", style=discord.ButtonStyle.primary)
     async def next_question(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("Start your own solo trivia to play.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("Start your own solo trivia to play."), ephemeral=True)
             return
         if self.next_index >= len(self.questions):
-            await interaction.response.send_message("That was the last question. Play again for a fresh set.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("That was the last question. Play again for a fresh set."), ephemeral=True)
             return
         await send_trivia_question(interaction, self.questions, self.cache_id, self.next_index, self.owner_id)
 
     @discord.ui.button(label="Play again", style=discord.ButtonStyle.success)
     async def play_again(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("Start your own solo trivia to play.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("Start your own solo trivia to play."), ephemeral=True)
             return
         rows = make_pack_trivia(self.owner_id, "medium", 5, "solo")
         if not rows:
-            await interaction.response.send_message("I couldn't find enough local mod data for trivia.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("I couldn't find enough local mod data for trivia."), ephemeral=True)
             return
         await send_trivia_question(interaction, rows, None, 0, self.owner_id)
 
@@ -535,7 +582,7 @@ class TriviaGameView(discord.ui.View):
 
     async def choose(self, interaction: discord.Interaction, chosen: str):
         if self.mode == "solo" and interaction.user.id != self.owner_id:
-            await interaction.response.send_message("This is someone else's solo quiz.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("This is someone else's solo quiz."), ephemeral=True)
             return
         row = self.questions[self.index]
         elapsed = max(0.0, asyncio.get_running_loop().time() - self.started_at)
@@ -543,7 +590,7 @@ class TriviaGameView(discord.ui.View):
         if chosen != row["answer"]:
             # Solo answers are revealed immediately. Multiplayer rounds remain open after a wrong guess.
             if self.mode == "party":
-                await interaction.response.send_message("Nope, keep going.", ephemeral=True)
+                await interaction.response.send_message(embed=make_notice_embed("Nope, keep going."), ephemeral=True)
                 return
             self.stop()
             next_index = self.index + 1
@@ -657,7 +704,7 @@ async def start_cached_trivia_question(message: discord.Message, cached: dict[st
     questions = payload.get("questions") or []
     index = int(payload.get("index", 0))
     if index >= len(questions):
-        await message.reply("That was the last question. Start a new game with /trivia.", mention_author=False)
+        await message.reply(embed=make_notice_embed("That was the last question. Start a new game with /trivia."), mention_author=False)
         return
     view = TriviaGameView(questions, message.author.id, "solo", index=index, cache_id=int(cached["id"]))
     sent = await message.reply(embed=view.embed(), view=view, mention_author=False)
@@ -710,11 +757,15 @@ class ActivityPeriodView(discord.ui.View):
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("Run this command to open your own activity view.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("Run this command to open your own activity view."), ephemeral=True)
             return False
         return True
 
     async def show_period(self, interaction: discord.Interaction, days: int, label: str):
+        selected = {1: "activity:daily", 7: "activity:weekly", 30: "activity:monthly"}.get(days)
+        for child in self.children:
+            if isinstance(child, discord.ui.Button) and child.custom_id and child.custom_id.startswith("activity:"):
+                child.style = discord.ButtonStyle.primary if child.custom_id == selected else discord.ButtonStyle.secondary
         since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         activity = get_server_activity_stats(str(self.guild_id), since,
                                              str(self.user_id) if self.user_id else None)
@@ -744,17 +795,17 @@ class ActivityPeriodView(discord.ui.View):
         embed.set_footer(text=f"Showing the last {label.lower()} · choose another period below")
         await interaction.response.edit_message(embed=embed, view=self)
 
-    @discord.ui.button(label="24 hours", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Daily", style=discord.ButtonStyle.secondary, custom_id="activity:daily")
     async def day_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.show_period(interaction, 1, "24 hours")
+        await self.show_period(interaction, 1, "Daily")
 
-    @discord.ui.button(label="7 days", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Weekly", style=discord.ButtonStyle.secondary, custom_id="activity:weekly")
     async def week_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.show_period(interaction, 7, "7 days")
+        await self.show_period(interaction, 7, "Weekly")
 
-    @discord.ui.button(label="30 days", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Monthly", style=discord.ButtonStyle.secondary, custom_id="activity:monthly")
     async def month_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.show_period(interaction, 30, "30 days")
+        await self.show_period(interaction, 30, "Monthly")
 
 
 def setup_commands(bot):
@@ -774,7 +825,7 @@ def setup_commands(bot):
             return
         
         if not interaction.guild:
-            await interaction.response.send_message("Use this command in a server.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("Use this command in a server."), ephemeral=True)
             return
         set_main_channel_id(interaction.channel.id, str(interaction.guild.id))
         
@@ -844,7 +895,7 @@ def setup_commands(bot):
             return
         
         if not interaction.guild:
-            await interaction.response.send_message("Use this command in a server.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("Use this command in a server."), ephemeral=True)
             return
         # Prove the channel accepts Jenny's embeds before storing the setting.
         probe = discord.Embed(title="Jenny logs connected", description="This channel will receive configured chat, profile, and error logs.", color=discord.Color.green())
@@ -993,7 +1044,7 @@ def setup_commands(bot):
     @tree.command(name="trivialeaderboard", description="Show the server's modpack trivia leaderboard")
     async def trivialeaderboard(interaction: discord.Interaction):
         if not interaction.guild_id:
-            await interaction.response.send_message("The trivia leaderboard is server-specific; use it in a server.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("The trivia leaderboard is server-specific; use it in a server."), ephemeral=True)
             return
         rows = get_trivia_leaderboard(str(interaction.guild_id), 500)
         if not rows:
@@ -1426,7 +1477,7 @@ def setup_commands(bot):
     async def serverinfo(interaction: discord.Interaction):
         guild = interaction.guild
         if not guild:
-            await interaction.response.send_message("Use this command in a server.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("Use this command in a server."), ephemeral=True)
             return
         created = discord.utils.format_dt(guild.created_at, style="D")
         embed = discord.Embed(title=guild.name, color=discord.Color.blurple())
@@ -1448,11 +1499,11 @@ def setup_commands(bot):
     async def user_command(interaction: discord.Interaction, member: Optional[discord.Member] = None):
         guild = interaction.guild
         if not guild:
-            await interaction.response.send_message("Use this command in a server.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("Use this command in a server."), ephemeral=True)
             return
         target = member or interaction.user
         if not isinstance(target, discord.Member):
-            await interaction.response.send_message("I couldn't load that server member.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("I couldn't load that server member."), ephemeral=True)
             return
         embed = discord.Embed(title=f"{target.display_name}", color=target.color or discord.Color.blurple())
         embed.set_thumbnail(url=target.display_avatar.url)
@@ -1469,11 +1520,11 @@ def setup_commands(bot):
     @app_commands.describe(user="Member to look up")
     async def lastseen(interaction: discord.Interaction, user: discord.Member):
         if not interaction.guild:
-            await interaction.response.send_message("Use this command in a server.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("Use this command in a server."), ephemeral=True)
             return
         item = get_last_user_message(str(interaction.guild.id), str(user.id))
         if not item:
-            await interaction.response.send_message(f"I don't have a saved message from {user.mention} yet.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed(f"I don't have a saved message from {user.mention} yet."), ephemeral=True)
             return
         channel = interaction.guild.get_channel(int(item["channel_id"])) if item.get("channel_id") else None
         location = channel.mention if channel else "a channel"
@@ -1482,7 +1533,7 @@ def setup_commands(bot):
             when = discord.utils.format_dt(timestamp, style="R")
         except (TypeError, ValueError):
             when = item["timestamp"]
-        await interaction.response.send_message(f"{user.mention}'s latest saved message was in {location} {when}.", ephemeral=True)
+        await interaction.response.send_message(embed=make_notice_embed(f"{user.mention}'s latest saved message was in {location} {when}."), ephemeral=True)
 
     @tree.command(name="assignrole", description="Assign a role when your permissions and role hierarchy allow it")
     @app_commands.default_permissions(administrator=True)
@@ -1490,27 +1541,27 @@ def setup_commands(bot):
     async def assignrole(interaction: discord.Interaction, user: discord.Member, role: discord.Role):
         guild = interaction.guild
         if not guild or not isinstance(interaction.user, discord.Member):
-            await interaction.response.send_message("Use this command in a server.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("Use this command in a server."), ephemeral=True)
             return
         actor = interaction.user
         if not actor.guild_permissions.administrator:
-            await interaction.response.send_message("Only a server administrator can assign roles through Jenny.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("Only a server administrator can assign roles through Jenny."), ephemeral=True)
             return
         if role.is_default() or actor.top_role <= role:
-            await interaction.response.send_message("Your highest role must be above the role you want to assign.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("Your highest role must be above the role you want to assign."), ephemeral=True)
             return
         bot_member = guild.me
         if not bot_member or not bot_member.guild_permissions.manage_roles or bot_member.top_role <= role:
-            await interaction.response.send_message("I need Manage Roles and a highest role above the requested role.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("I need Manage Roles and a highest role above the requested role."), ephemeral=True)
             return
         if user.id == guild.owner_id or user.top_role >= bot_member.top_role:
-            await interaction.response.send_message("I can't change roles for the server owner or a member at/above my role.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("I can't change roles for the server owner or a member at/above my role."), ephemeral=True)
             return
         try:
             await user.add_roles(role, reason=f"Requested by administrator {actor} through Jenny")
-            await interaction.response.send_message(f"Assigned {role.mention} to {user.mention}.")
+            await interaction.response.send_message(embed=make_notice_embed(f"Assigned {role.mention} to {user.mention}."))
         except discord.Forbidden:
-            await interaction.response.send_message("Discord denied the role change. Check my role position and permissions.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("Discord denied the role change. Check my role position and permissions."), ephemeral=True)
 
     @tree.command(name="removerole", description="Remove a role when your permissions and role hierarchy allow it")
     @app_commands.default_permissions(administrator=True)
@@ -1519,45 +1570,45 @@ def setup_commands(bot):
         guild = interaction.guild
         actor = interaction.user
         if not guild or not isinstance(actor, discord.Member):
-            await interaction.response.send_message("Use this command in a server.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("Use this command in a server."), ephemeral=True)
             return
         if not actor.guild_permissions.administrator:
-            await interaction.response.send_message("Only a server administrator can remove roles through Jenny.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("Only a server administrator can remove roles through Jenny."), ephemeral=True)
             return
         bot_member = guild.me
         if role.is_default() or actor.top_role <= role:
-            await interaction.response.send_message("Your highest role must be above the role you want to remove.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("Your highest role must be above the role you want to remove."), ephemeral=True)
             return
         if not bot_member or not bot_member.guild_permissions.manage_roles or bot_member.top_role <= role:
-            await interaction.response.send_message("I need Manage Roles and a highest role above the requested role.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("I need Manage Roles and a highest role above the requested role."), ephemeral=True)
             return
         if user.id == guild.owner_id or user.top_role >= bot_member.top_role:
-            await interaction.response.send_message("I can't change roles for the server owner or a member at/above my role.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("I can't change roles for the server owner or a member at/above my role."), ephemeral=True)
             return
         if role not in user.roles:
-            await interaction.response.send_message(f"{user.mention} doesn't have {role.mention}.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed(f"{user.mention} doesn't have {role.mention}."), ephemeral=True)
             return
         try:
             await user.remove_roles(role, reason=f"Requested by administrator {actor} through Jenny")
-            await interaction.response.send_message(f"Removed {role.mention} from {user.mention}.")
+            await interaction.response.send_message(embed=make_notice_embed(f"Removed {role.mention} from {user.mention}."))
         except discord.Forbidden:
-            await interaction.response.send_message("Discord denied the role change. Check my role position and permissions.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("Discord denied the role change. Check my role position and permissions."), ephemeral=True)
         except discord.HTTPException as error:
-            await interaction.response.send_message(f"Discord couldn't complete that role change: {error}", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed(f"Discord couldn't complete that role change: {error}"), ephemeral=True)
 
     @tree.command(name="searchchat", description="Search recent messages in Jenny's configured channel")
     @app_commands.describe(query="Words or phrase to find")
     async def searchchat(interaction: discord.Interaction, query: str):
         if not interaction.guild:
-            await interaction.response.send_message("Use this command in a server.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("Use this command in a server."), ephemeral=True)
             return
         channel_id = get_main_channel_id(str(interaction.guild.id))
         if not channel_id:
-            await interaction.response.send_message("Set Jenny's searchable channel first with /setmainchannel.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("Set Jenny's searchable channel first with /setmainchannel."), ephemeral=True)
             return
         matches = search_chat_messages(channel_id, query, limit=100)
         if not matches:
-            await interaction.response.send_message(f"No saved messages matched {query!r}.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed(f"No saved messages matched {query!r}."), ephemeral=True)
             return
         pages = []
         for start in range(0, len(matches), 5):
@@ -1573,12 +1624,12 @@ def setup_commands(bot):
     @app_commands.describe(hours="Time window from 1 to 720 hours")
     async def summarize(interaction: discord.Interaction, hours: int = 24):
         if not interaction.guild or not interaction.channel:
-            await interaction.response.send_message("Use this command in a server channel.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("Use this command in a server channel."), ephemeral=True)
             return
         hours = max(1, min(hours, 720))
         rows = get_recent_channel_messages(str(interaction.channel.id), hours, 150)
         if not rows:
-            await interaction.response.send_message("I don't have saved messages for that channel and time window yet.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("I don't have saved messages for that channel and time window yet."), ephemeral=True)
             return
         await interaction.response.defer(thinking=True)
         from ai import generate
@@ -1593,7 +1644,7 @@ def setup_commands(bot):
     @app_commands.default_permissions(administrator=True)
     async def voicetimes(interaction: discord.Interaction):
         if not interaction.guild:
-            await interaction.response.send_message("Use this command in a server.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("Use this command in a server."), ephemeral=True)
             return
         if not interaction.user.guild_permissions.administrator:
             await interaction.response.send_message(
@@ -1603,7 +1654,7 @@ def setup_commands(bot):
             return
         rows = get_recent_voice_chat(hours=24 * 3650, max_entries=100, guild_id=str(interaction.guild.id))
         if not rows:
-            await interaction.response.send_message("No voice inputs have been recorded for this server yet.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("No voice inputs have been recorded for this server yet."), ephemeral=True)
             return
 
         class VoiceTimesView(discord.ui.View):
@@ -1644,7 +1695,7 @@ def setup_commands(bot):
 
             async def change_page(self, interaction: discord.Interaction, delta: int):
                 if interaction.user.id != self.owner_id:
-                    await interaction.response.send_message("Only the person who opened this report can page through it.", ephemeral=True)
+                    await interaction.response.send_message(embed=make_notice_embed("Only the person who opened this report can page through it."), ephemeral=True)
                     return
                 pages = max(1, (len(self.entries) + self.page_size - 1) // self.page_size)
                 self.page = max(0, min(pages - 1, self.page + delta))
@@ -1658,7 +1709,7 @@ def setup_commands(bot):
             @discord.ui.button(label="Page 1/1 · go to", style=discord.ButtonStyle.primary, custom_id="voice-times:page")
             async def page_button(self, interaction: discord.Interaction, button: discord.ui.Button):
                 if interaction.user.id != self.owner_id:
-                    await interaction.response.send_message("Only the person who opened this report can page through it.", ephemeral=True)
+                    await interaction.response.send_message(embed=make_notice_embed("Only the person who opened this report can page through it."), ephemeral=True)
                     return
                 self.message = interaction.message
 
@@ -1669,16 +1720,16 @@ def setup_commands(bot):
                         try:
                             requested = int(modal_self.page_number.value)
                         except ValueError:
-                            await modal_interaction.response.send_message("Enter a whole page number.", ephemeral=True)
+                            await modal_interaction.response.send_message(embed=make_notice_embed("Enter a whole page number."), ephemeral=True)
                             return
                         pages = max(1, (len(self.entries) + self.page_size - 1) // self.page_size)
                         if requested < 1 or requested > pages:
-                            await modal_interaction.response.send_message(f"Choose a page from 1 to {pages}.", ephemeral=True)
+                            await modal_interaction.response.send_message(embed=make_notice_embed(f"Choose a page from 1 to {pages}."), ephemeral=True)
                             return
                         self.page = requested - 1
                         self.page_button.label = f"Page {requested}/{pages} · go to"
                         await self.message.edit(embed=self.build_embed(), view=self)
-                        await modal_interaction.response.send_message(f"Showing page {requested}.", ephemeral=True)
+                        await modal_interaction.response.send_message(embed=make_notice_embed(f"Showing page {requested}."), ephemeral=True)
 
                 pages = max(1, (len(self.entries) + self.page_size - 1) // self.page_size)
                 modal = PageNumberModal()
@@ -1708,7 +1759,7 @@ def setup_commands(bot):
 
         async def show_period(self, interaction: discord.Interaction, days: int, label: str):
             if interaction.user.id != self.owner_id:
-                await interaction.response.send_message("Only the person who opened this report can change its range.", ephemeral=True)
+                await interaction.response.send_message(embed=make_notice_embed("Only the person who opened this report can change its range."), ephemeral=True)
                 return
             since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
             selected_custom_id = f"usage:{label.lower()}"
@@ -1757,7 +1808,7 @@ def setup_commands(bot):
 
         async def page_members(self, interaction: discord.Interaction, delta: int):
             if interaction.user.id != self.owner_id:
-                await interaction.response.send_message("Only the person who opened this report can page it.", ephemeral=True)
+                await interaction.response.send_message(embed=make_notice_embed("Only the person who opened this report can page it."), ephemeral=True)
                 return
             self.page = max(0, min((len(self.token_rows) - 1) // 15, self.page + delta))
             self.previous_page.disabled = self.page <= 0
@@ -1789,7 +1840,7 @@ def setup_commands(bot):
     @app_commands.describe(user="Optional member to filter by")
     async def tokenusage(interaction: discord.Interaction, user: Optional[discord.Member] = None):
         if not interaction.guild:
-            await interaction.response.send_message("Use this command in a server.", ephemeral=True)
+            await interaction.response.send_message(embed=make_notice_embed("Use this command in a server."), ephemeral=True)
             return
         if not interaction.user.guild_permissions.administrator:
             await interaction.response.send_message(

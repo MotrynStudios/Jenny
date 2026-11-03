@@ -97,6 +97,8 @@ class ModData:
     items: List[str]  # Item names from language files
     blocks: List[str]  # Block names from language files
     gun_data: List[Dict[str, Any]]  # TaCZ custom gunpack stats and attachment data
+    custom_data: List[Dict[str, Any]]  # Structured per-mod JSON from data and custom namespaces
+    asset_data: List[Dict[str, Any]]  # Texture/model references, not raw image pixels
 
 
 class ModpackExtractor:
@@ -124,7 +126,7 @@ class ModpackExtractor:
         return jar_files
     
     def extract_mod_metadata(self, jar_path: Path) -> Optional[ModMetadata]:
-        """Read Forge/NeoForge TOML or Fabric/Quilt JSON metadata."""
+        """Read current loader metadata plus legacy pre-1.13 Forge mcmod.info."""
         try:
             with zipfile.ZipFile(jar_path, 'r') as jar:
                 # Try different possible locations for mods.toml
@@ -141,6 +143,22 @@ class ModpackExtractor:
                         break
                 
                 if not mods_toml_path:
+                    if "mcmod.info" in jar.namelist():
+                        with jar.open("mcmod.info") as source:
+                            legacy = json.load(source)
+                        if isinstance(legacy, dict):
+                            legacy = legacy.get("modList", legacy.get("mods", [legacy]))
+                        if isinstance(legacy, list):
+                            info = next((row for row in legacy if isinstance(row, dict)), None)
+                            if info:
+                                mod_id = _metadata_text(info.get("modid") or info.get("modId") or info.get("mod_id"), jar_path.stem)
+                                version = _metadata_text(info.get("version"), "unknown")
+                                display_name = _metadata_text(info.get("name") or info.get("displayName"), mod_id)
+                                description = _metadata_text(info.get("description"))
+                                authors_value = info.get("authorList", info.get("authors", []))
+                                authors = authors_value if isinstance(authors_value, list) else [authors_value] if authors_value else []
+                                return ModMetadata(mod_id, version, display_name, description,
+                                                   [_metadata_text(author) for author in authors if _metadata_text(author)], [], str(jar_path))
                     for json_path in ("fabric.mod.json", "quilt.mod.json"):
                         if json_path not in jar.namelist():
                             continue
@@ -241,29 +259,29 @@ class ModpackExtractor:
             return None
     
     def extract_language_data(self, jar_path: Path, mod_id: str) -> Dict[str, str]:
-        """Extract English language data from mod JAR"""
+        """Merge English localization across all resource namespaces in a JAR."""
         language_data = {}
         try:
             with zipfile.ZipFile(jar_path, 'r') as jar:
-                # Look for English language file
-                possible_paths = [
-                    f"assets/{mod_id}/lang/en_us.json",
-                    f"assets/{mod_id}/lang/en_ud.json",
-                    f"assets/{mod_id}/lang/en.json"
-                ]
-                
-                lang_file_path = None
-                for path in possible_paths:
-                    if path in jar.namelist():
-                        lang_file_path = path
-                        break
-                
-                if not lang_file_path:
-                    return language_data
-                
-                with jar.open(lang_file_path) as f:
-                    content = f.read().decode('utf-8')
-                    language_data = json.loads(content)
+                paths = [path for path in jar.namelist() if re.match(
+                    r"^assets/[^/]+/lang/(en_us|en_US|en|en_ud)\.(json|lang)$", path)]
+                for path in sorted(paths):
+                    try:
+                        with jar.open(path) as source:
+                            content = source.read().decode("utf-8-sig")
+                        if path.lower().endswith(".json"):
+                            data = json.loads(content)
+                            if isinstance(data, dict):
+                                language_data.update({str(key): _metadata_text(value) for key, value in data.items()})
+                        else:
+                            # Legacy Forge/FML localization format: key=value.
+                            for line in content.splitlines():
+                                stripped = line.strip()
+                                if stripped and not stripped.startswith(("#", "!")) and "=" in stripped:
+                                    key, value = stripped.split("=", 1)
+                                    language_data[key.strip()] = value.strip()
+                    except (UnicodeDecodeError, json.JSONDecodeError, OSError) as error:
+                        logger.warning("Could not parse language file %s in %s: %s", path, jar_path.name, error)
                     
         except Exception as e:
             logger.warning(f"Error extracting language data from {jar_path.name}: {e}")
@@ -280,16 +298,20 @@ class ModpackExtractor:
                 # alongside the same rename for advancements below.
                 # Matching both means this keeps working regardless of
                 # which Minecraft version the modpack's mods target.
-                recipe_pattern = re.compile(rf"data/{mod_id}/(?:recipes|recipe)/.*\.json$")
+                # Resource namespace is not guaranteed to equal the loader's
+                # mod ID. This occurs with renamed projects and bundled content.
+                recipe_pattern = re.compile(r"^data/([^/]+)/(?:recipes|recipe)/.+\.json$", re.I)
                 
                 for file_path in jar.namelist():
-                    if recipe_pattern.match(file_path):
+                    match = recipe_pattern.match(file_path)
+                    if match:
                         try:
                             with jar.open(file_path) as f:
                                 content = f.read().decode('utf-8')
                                 recipe_data = json.loads(content)
                                 recipe_data['_file_path'] = file_path
                                 recipe_data['_mod_id'] = mod_id
+                                recipe_data['_namespace'] = match.group(1)
                                 recipes.append(recipe_data)
                         except Exception as e:
                             logger.warning(f"Error parsing recipe {file_path}: {e}")
@@ -307,16 +329,18 @@ class ModpackExtractor:
                 # Look for advancement files. Same 1.21 rename story as
                 # recipes above ("advancements" -> "advancement"); matching
                 # both plural and singular covers pre- and post-1.21 mods.
-                advancement_pattern = re.compile(rf"data/{mod_id}/(?:advancements|advancement)/.*\.json$")
+                advancement_pattern = re.compile(r"^data/([^/]+)/(?:advancements|advancement)/.+\.json$", re.I)
                 
                 for file_path in jar.namelist():
-                    if advancement_pattern.match(file_path):
+                    match = advancement_pattern.match(file_path)
+                    if match:
                         try:
                             with jar.open(file_path) as f:
                                 content = f.read().decode('utf-8')
                                 advancement_data = json.loads(content)
                                 advancement_data['_file_path'] = file_path
                                 advancement_data['_mod_id'] = mod_id
+                                advancement_data['_namespace'] = match.group(1)
                                 advancements.append(advancement_data)
                         except Exception as e:
                             logger.warning(f"Error parsing advancement {file_path}: {e}")
@@ -352,6 +376,86 @@ class ModpackExtractor:
         except (OSError, zipfile.BadZipFile) as error:
             logger.warning("Could not inspect TaCZ data in %s: %s", jar_path.name, error)
         return records
+
+    def extract_custom_json_data(self, jar_path: Path) -> List[Dict[str, Any]]:
+        """Extract structured JSON data used by mods with nonstandard layouts.
+
+        Covers datapack namespaces and mod-owned ``assets/*/custom/*/data``
+        trees, which include gunpacks and other custom item/stat registries.
+        Standard recipes and advancements remain in their dedicated parsers.
+        """
+        records: List[Dict[str, Any]] = []
+        datapack = re.compile(r"^data/([^/]+)/(.+\.json)$", re.I)
+        custom_asset = re.compile(r"^assets/([^/]+)/custom/(.+?/data/.+\.json)$", re.I)
+        try:
+            with zipfile.ZipFile(jar_path, "r") as jar:
+                for file_path in jar.namelist():
+                    match = datapack.match(file_path) or custom_asset.match(file_path)
+                    if not match:
+                        continue
+                    namespace, relative_path = match.groups()
+                    category = relative_path.split("/", 1)[0].lower()
+                    if category in {"recipe", "recipes", "advancement", "advancements"}:
+                        continue
+                    info = jar.getinfo(file_path)
+                    if info.file_size > 1_000_000:
+                        logger.debug("Skipping large structured JSON %s", file_path)
+                        continue
+                    try:
+                        with jar.open(file_path) as source:
+                            payload = json.loads(_strip_jsonc_comments(source.read().decode("utf-8-sig")))
+                        records.append({"_namespace": namespace, "_data_path": file_path,
+                                        "_category": category, "data": payload})
+                    except (UnicodeDecodeError, json.JSONDecodeError, OSError) as error:
+                        logger.debug("Skipping non-standard JSON %s: %s", file_path, error)
+                    if len(records) >= 500:
+                        logger.warning("Structured JSON record limit reached in %s", jar_path.name)
+                        break
+        except (OSError, zipfile.BadZipFile) as error:
+            logger.warning("Could not inspect custom JSON data in %s: %s", jar_path.name, error)
+        return records
+
+    def extract_asset_manifest(self, jar_path: Path) -> List[Dict[str, Any]]:
+        """Index texture names and model-to-texture references as RAG metadata.
+
+        The extractor intentionally does not embed binary pixels. This gives
+        Jenny searchable asset IDs and file references without bloating Chroma.
+        """
+        texture_assets: List[Dict[str, Any]] = []
+        model_assets: List[Dict[str, Any]] = []
+        try:
+            with zipfile.ZipFile(jar_path, "r") as jar:
+                names = jar.namelist()
+                for path in names:
+                    if re.match(r"^assets/[^/]+/textures/.+\.(png|jpe?g|webp)$", path, re.I):
+                        texture_assets.append({"_asset_type": "texture", "_asset_path": path,
+                                               "_asset_id": path.rsplit("/textures/", 1)[-1].rsplit(".", 1)[0]})
+                        if len(texture_assets) >= 250:
+                            break
+                for path in names:
+                    if not re.match(r"^assets/[^/]+/models/.+\.json$", path, re.I):
+                        continue
+                    if len(model_assets) >= 250:
+                        break
+                    info = jar.getinfo(path)
+                    if info.file_size > 100_000:
+                        continue
+                    try:
+                        with jar.open(path) as source:
+                            model = json.load(source)
+                    except (UnicodeDecodeError, json.JSONDecodeError, OSError):
+                        continue
+                    textures = model.get("textures", {}) if isinstance(model, dict) else {}
+                    if isinstance(textures, dict):
+                        refs = [str(value) for value in textures.values() if isinstance(value, str)]
+                        if refs:
+                            model_assets.append({"_asset_type": "model", "_asset_path": path,
+                                                 "_asset_id": path.rsplit("/models/", 1)[-1].removesuffix(".json"),
+                                                 "textures": refs})
+                return texture_assets + model_assets
+        except (OSError, zipfile.BadZipFile) as error:
+            logger.warning("Could not inspect visual assets in %s: %s", jar_path.name, error)
+        return texture_assets + model_assets
     
     def extract_items_and_blocks(self, language_data: Dict[str, str]) -> tuple[List[str], List[str]]:
         """Extract item and block names from language data"""
@@ -383,6 +487,8 @@ class ModpackExtractor:
         # Custom gunpacks can be separate JARs with their own mod IDs, so scan
         # every archive for the TaCZ resource-data path, not just the core mod.
         gun_data = self.extract_tacz_gun_data(jar_path)
+        custom_data = self.extract_custom_json_data(jar_path)
+        asset_data = self.extract_asset_manifest(jar_path)
         items, blocks = self.extract_items_and_blocks(language_data)
         
         return ModData(
@@ -392,7 +498,9 @@ class ModpackExtractor:
             advancements=advancements,
             items=items,
             blocks=blocks,
-            gun_data=gun_data
+            gun_data=gun_data,
+            custom_data=custom_data,
+            asset_data=asset_data
         )
     
     def save_mod_data(self, mod_data: ModData):
@@ -426,6 +534,14 @@ class ModpackExtractor:
         if mod_data.gun_data:
             with open(mod_dir / "gun_data.json", "w", encoding="utf-8") as f:
                 json.dump(mod_data.gun_data, f, indent=2, ensure_ascii=False)
+
+        if mod_data.custom_data:
+            with open(mod_dir / "custom_data.json", "w", encoding="utf-8") as f:
+                json.dump(mod_data.custom_data, f, indent=2, ensure_ascii=False)
+
+        if mod_data.asset_data:
+            with open(mod_dir / "asset_manifest.json", "w", encoding="utf-8") as f:
+                json.dump(mod_data.asset_data, f, indent=2, ensure_ascii=False)
         
         # Save items and blocks
         items_blocks_path = mod_dir / "items_blocks.json"
@@ -455,6 +571,8 @@ class ModpackExtractor:
                 'advancements_count': len(mod_data.advancements)
             }
             mod_summary['gun_data_count'] = len(mod_data.gun_data)
+            mod_summary['custom_data_count'] = len(mod_data.custom_data)
+            mod_summary['asset_reference_count'] = len(mod_data.asset_data)
             summary['mods'].append(mod_summary)
         
         summary_path = self.output_dir / "modpack_summary.json"

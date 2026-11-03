@@ -197,6 +197,32 @@ def init_database() -> None:
         )
     """)
 
+    # Older releases copied the same summary into both a shared and a guild/DM
+    # scope. Drop only byte-for-byte duplicate local rows; distinct legacy
+    # context remains readable until a human-memory update consolidates it.
+    cursor.execute("""
+        DELETE FROM scoped_user_memory AS local
+        WHERE local.scope_id != ('user:' || local.user_id)
+          AND EXISTS (
+              SELECT 1 FROM scoped_user_memory AS shared
+              WHERE shared.scope_id = ('user:' || local.user_id)
+                AND shared.user_id = local.user_id
+                AND shared.summary = local.summary
+          )
+    """)
+
+    # Old maintenance runs occasionally used display names or "unknown" as
+    # memory keys. A Discord account ID is numeric, so these records cannot be
+    # safely attributed to a person and must not be fed back into prompts.
+    cursor.execute("DELETE FROM scoped_user_memory WHERE user_id GLOB '*[^0-9]*' OR trim(user_id) = ''")
+    # Persona text is not a user's personal memory. Remove only summaries that
+    # are clearly stored as a Jenny biography, leaving ordinary mentions intact.
+    cursor.execute("""
+        DELETE FROM scoped_user_memory
+        WHERE lower(trim(summary)) LIKE 'jenny is %'
+           OR lower(trim(summary)) LIKE 'jenny belle is %'
+    """)
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS token_usage (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -436,6 +462,37 @@ def init_database() -> None:
         ON dm_voice_log(dm_session_id)
     """)
 
+    # Preserve model protocol roles, but label who each saved message came
+    # from. This is a one-time JSON migration and keeps historical turns
+    # human-readable without changing the API's user/assistant contract.
+    history_rows = cursor.execute(
+        "SELECT conversation_id, user_id, username, history FROM conversation_history"
+    ).fetchall()
+    history_migrations = []
+    for row in history_rows:
+        try:
+            history = json.loads(row["history"] or "[]")
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(history, list):
+            continue
+        changed = False
+        for entry in history:
+            if not isinstance(entry, dict) or entry.get("role") not in {"user", "assistant"}:
+                continue
+            speaker = "Jenny" if entry["role"] == "assistant" else str(entry.get("speaker") or row["username"] or "User")
+            if entry.get("speaker") != speaker:
+                entry["speaker"] = speaker
+                changed = True
+        if changed:
+            history_migrations.append((json.dumps(history, ensure_ascii=False), row["conversation_id"], row["user_id"]))
+    cursor.executemany(
+        "UPDATE conversation_history SET history = ? WHERE conversation_id = ? AND user_id = ?",
+        history_migrations,
+    )
+    if history_migrations:
+        print(f"[DB] Added readable speaker names to {len(history_migrations)} saved conversation(s)")
+
     conn.commit()
     conn.close()
 
@@ -495,7 +552,18 @@ def get_conversation_history(conversation_id: str, user_id: str, limit: int = 24
 
 def save_conversation_history(conversation_id: str, user_id: str, username: str,
                               history: List[Dict[str, str]], limit: int = 24) -> None:
-    """Save a bounded conversation window without mixing scopes."""
+    """Save API roles with explicit names for the people who spoke.
+
+    ``role`` stays ``user``/``assistant`` because chat APIs require these
+    protocol values. ``speaker`` makes saved history readable to people.
+    """
+    normalized_history = []
+    for entry in history[-limit:]:
+        if not isinstance(entry, dict) or entry.get("role") not in {"user", "assistant"}:
+            continue
+        normalized = dict(entry)
+        normalized["speaker"] = "Jenny" if entry["role"] == "assistant" else str(entry.get("speaker") or username)
+        normalized_history.append(normalized)
     conn = get_connection()
     conn.execute("""
         INSERT INTO conversation_history (conversation_id, user_id, username, history, updated_at)
@@ -505,7 +573,7 @@ def save_conversation_history(conversation_id: str, user_id: str, username: str,
             history = excluded.history,
             updated_at = excluded.updated_at
     """, (str(conversation_id), str(user_id), username,
-          json.dumps(history[-limit:]), datetime.now(timezone.utc).isoformat()))
+          json.dumps(normalized_history), datetime.now(timezone.utc).isoformat()))
     conn.commit()
     conn.close()
 
@@ -1776,7 +1844,7 @@ def get_messages_for_maintenance(channel_id: str, limit: int = 100) -> List[Dict
     cursor.execute("""
         SELECT id, timestamp, author, user_id, content
         FROM global_log
-        WHERE id > ? AND channel_id = ? AND author != 'Jenny (System)'
+        WHERE id > ? AND channel_id = ? AND author NOT IN ('Jenny', 'Jenny (System)')
         ORDER BY id ASC
         LIMIT ?
     """, (last_id, channel_id, limit))
@@ -1993,70 +2061,20 @@ def initialize_changelog() -> None:
     """Ensure the current public release entry exists without deleting history."""
     try:
         add_changelog_entry(
-            version="0.90",
-            description="Jenny 0.90 continues saved solo trivia with the next question when the player asks for more",
+            version="0.91",
+            description="Fixed memory attribution and trivia parsing; improved RAG coverage, startup, and command consistency",
             features=[
-                "Continue an active saved solo trivia game by asking Jenny for more",
-                "Paged embed output for large command results, with saved pages for more/next follow-ups",
-                "Context-aware saved command and trivia outputs stored in SQLite for the current conversation",
-                "Timed solo and multiplayer mod trivia, selectable difficulty, first-correct scoring, round limits, replay, and server leaderboard",
-                "Recipe lookup cards with shaped crafting grids and optional standalone recipe messages",
-                "TaCZ gun, ammunition, and attachment stats extracted from JSONC gunpack data and indexed for retrieval",
-                "Fabric and Quilt mod metadata parsing in addition to Forge and NeoForge metadata",
-                "Mention-triggered server chat and natural conversations in direct messages",
-                "Voice conversations with speech recognition, spoken replies, and chat, voice, or both reply modes",
-                "Image and animated GIF understanding, plus image context for follow-up conversations",
-                "Minecraft mod, modpack, config, and recipe answers grounded in indexed RAG data",
-                "External search fallback when local mod data is incomplete, with uncertainty stated clearly",
-                "Conversation histories scoped by conversation, shared personal memory across DMs and servers, and automatic channel/voice summaries",
-                "Natural language command requests and slash commands for supported bot actions",
-                "Server and member information, avatars, roles, join dates, activity windows, and saved profile change history",
-                "Role assignment and removal with administrator, role hierarchy, and bot permission checks",
-                "Configured channel logging for incoming messages, Jenny replies, and profile events",
-                "Voice message attachment transcription in Jenny's configured channel",
-                "Chat search and chat summarization for saved messages",
-                "Per-user token totals, speech-to-text and text-to-speech duration reports, and paged recent voice timing history",
-                "Private help showing commands available to the caller, plus user self-memory controls",
-                "Persistent Python, Node, and structured voice-turn logs with bounded retention",
-                "Voice service status and clear error replies when a connected feature is unavailable",
-                "Configured primary and backup provider fallbacks",
-                "Personable concise chat and original playful song responses",
-                "Jenny Belle character profile and live speaker/Jenny role metadata in server chat prompts",
-                "Minecraft singleplayer 26.3 Playing activity with a restart-resetting elapsed session title",
-                "Minecraft grass-block rich-presence art asset with transparent background (local asset; bot presence API cannot display custom art)",
-                "Pack-grounded /mods and interactive /trivia tools, with natural language entry points",
-                "Full installed-mod roster answers from the local manifest, including questions phrased as what Jenny is playing",
-                "Exact metadata matching alongside semantic RAG retrieval for item, recipe, and config questions",
-                "Mod-scoped semantic results when a question explicitly names one mod, to reduce cross-mod noise from large collections",
-                "Whitespace-only config chunks are skipped during extraction and retrieval",
-                "Discord embed and trusted-host GIF/image link vision input in server chat, replies, and DMs",
-                "Server text requires Jenny's actual name or direct bot mention; fuzzy voice wake-word guesses are not used",
-                "Selectable activity periods for /serverinfo and /user, including total connected voice-channel time",
-                "Voice presence tracking starts when installed; restart downtime is excluded from reported totals",
-                "Natural concise chat style with less service-desk phrasing and occasional situational sarcasm",
-                "Private /health status for Discord, API, voice, RAG corpus, logs channel, and message intent",
-                "Three-button changelog pager with a page-jump number button",
+                "Name-resolved role changes with conflict checks; paged embeds and unified activity ranges",
+                "Legacy/custom mod data extraction and texture/model asset references",
+                "Gemini-first memory maintenance with readable participant names",
             ],
             changes=[
-                "Reduced automatic memory summaries to bounded batches, added a smaller retry for malformed output, and added persistent exponential backoff after repeated failures",
-                "Restricted summary memory updates to participant IDs and corrected DM memory attribution",
-                "Linked personal memory across DMs, server text, and server voice by stable Discord user ID",
-                "Updated /mymemory to show cross-context personal memory and /forgetmydata to clear it across all Jenny conversations",
-                "Improved NeoForge TOML dependency parsing and safe ChromaDB metadata conversion",
-                "Prevented an empty processed corpus from being reported as a successful RAG build",
-                "Avoided loading full user profile history unless a profile-related question needs it",
-                "Removed an unused prompt argument and duplicate voice-context injection",
-                "Preserved prior changelog entries instead of deleting them at startup",
-                "Registered the missing on_message Discord event, restoring chat responses and message logging",
-                "Added receive-event traces and clear user-visible errors for message processing failures",
-                "Use one shared complete manifest for mod roster answers and RAG summaries; ignore blank chunks",
-                "Separate strict text-name matching from tolerant Whisper wake-word matching",
-                "Verify the selected logs channel by posting a probe before saving it; include slash-command failures in audit logs",
-                "Refresh Minecraft activity every 15 seconds using a two-line Playing activity and process uptime",
+                "Excluded Jenny's replies, duplicate scopes, and malformed IDs from user memory",
+                "Stopped unrelated chat copies in configured logs; made RAG prewarming opt-in",
             ],
             entry_type="release",
         )
-        print("[Changelog] Current release entry ensured at version 0.90")
+        print("[Changelog] Current release entry ensured at version 0.91")
     except Exception as error:
         print(f"[Changelog] Error initializing changelog: {error}")
 

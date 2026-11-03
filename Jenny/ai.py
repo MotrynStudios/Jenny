@@ -196,6 +196,40 @@ async def generate(messages: List[Dict[str, str]], usage_context: Optional[Mappi
     return "my brain's completely fried right now, try again in a bit?"
 
 
+async def generate_memory_maintenance(messages: List[Dict[str, str]],
+                                     usage_context: Optional[Mapping[str, Optional[str]]] = None,
+                                     max_tokens: Optional[int] = None) -> str:
+    """Prefer Gemini for background memory upkeep, then use normal fallbacks.
+
+    Memory jobs are non-interactive, so they can use the provider with the
+    larger available maintenance quota without changing conversational order.
+    """
+    providers = [
+        (gemini, GEMINI_MODEL, "Gemini maintenance"),
+        (openrouter, OPENROUTER_MODEL, "OpenRouter maintenance fallback"),
+        (groq, GROQ_TEXT_MODEL, "Groq maintenance fallback"),
+        (groq_backup, GROQ_TEXT_MODEL, "Groq backup maintenance fallback"),
+    ]
+    for client, model, label in providers:
+        if client is None:
+            continue
+        try:
+            response = await client.chat.completions.create(
+                model=model,
+                messages=messages,
+                max_tokens=max(64, min(int(max_tokens or 900), 1500)),
+                temperature=0.1,
+            )
+            _log_usage(model, response, usage_context)
+            content = response.choices[0].message.content
+            if content:
+                print(f"[AI] {label} ({model}) generated a memory update")
+                return _clean_reply(content)
+        except Exception as error:
+            print(f"[AI] {label} ({model}) failed: {error}")
+    return "{}"
+
+
 
 async def analyze_image(image_url: str, hint: str = "", usage_context: Optional[Mapping[str, Optional[str]]] = None) -> Optional[str]:
     """Analyze a single image with fallback: primary → backup (key 2) → None if both fail."""
@@ -373,4 +407,3 @@ async def _prepare_image_items(image_url: str) -> List[Dict[str, Any]]:
     except Exception as error:
         print(f"[Vision] Animation sampling unavailable ({content_type}): {error}")
     return [{"type": "image_url", "image_url": {"url": image_url}}]
-

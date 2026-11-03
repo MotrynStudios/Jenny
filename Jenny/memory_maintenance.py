@@ -10,12 +10,12 @@ from database import (
     get_channel_memory, set_channel_memory, get_memory_maintenance_info,
     update_memory_maintenance, should_trigger_memory_maintenance, defer_memory_maintenance,
     get_messages_for_maintenance, get_voice_messages_for_maintenance,
-    get_user_summary, set_user_summary, log_message,
+    log_message,
     get_dm_text_for_maintenance, get_dm_voice_for_maintenance,
     set_scoped_user_summary, get_combined_user_summary
 )
 from prompt_builder import build_memory_prompt
-from ai import generate as ai_generate
+from ai import generate_memory_maintenance as ai_generate
 
 
 async def run_memory_maintenance_for_stream(channel_id: str, stream_type: str = "text",
@@ -71,6 +71,17 @@ async def run_memory_maintenance_for_stream(channel_id: str, stream_type: str = 
             # repeatedly waking an empty stream every scheduler interval.
             update_memory_maintenance(channel_id, stream_type, last_message_id, 0, reset_pending=True)
             return False
+
+        # DM logs contain both participants for context, but Jenny's messages
+        # must never be treated as facts about the human user.
+        source_messages = messages
+        if stream_type == "dm_text":
+            messages = [row for row in source_messages if row.get("direction") == "incoming"]
+            if not messages:
+                cursor_id = source_messages[-1].get("id", last_message_id)
+                update_memory_maintenance(channel_id, stream_type, cursor_id, len(source_messages))
+                print(f"[Memory] Skipped {len(source_messages)} Jenny DM replies; no user facts to save")
+                return False
 
         # Get current channel summary (skip for DM streams)
         current_channel_summary = ""
@@ -150,14 +161,6 @@ async def run_memory_maintenance_for_stream(channel_id: str, stream_type: str = 
             for user_id, value in raw_user_updates.items()
             if str(user_id) in allowed_user_ids and isinstance(value, str) and value.strip()
         }
-        # A DM has exactly one participant. Correct malformed older output that
-        # used a placeholder key such as "unknown" instead of their real ID.
-        if stream_type.startswith("dm_") and len(allowed_user_ids) == 1 and not user_updates:
-            candidate = next((value for value in raw_user_updates.values()
-                              if isinstance(value, str) and value.strip()), None)
-            if candidate:
-                user_updates[allowed_user_ids[0]] = candidate.strip()[:450]
-
         channel_summary_value = memory_update.get("channel_summary")
         if not stream_type.startswith("dm_") and not isinstance(channel_summary_value, str):
             retry_after = defer_memory_maintenance(channel_id, stream_type)
@@ -170,13 +173,9 @@ async def run_memory_maintenance_for_stream(channel_id: str, stream_type: str = 
             log_message("Jenny (System)", f"Updated channel summary for {channel_id}", None, channel_id)
 
         for user_id, user_memory in user_updates.items():
-            # Keep the merged summary in the shared user scope so the same
-            # Discord account can recall it in DMs, voice, and any guild.
+            # Keep exactly one canonical row. Discord snowflake IDs link the
+            # same person across DMs and guilds without copying summaries.
             set_scoped_user_summary(f"user:{user_id}", user_id, user_memory)
-            if memory_scope:
-                set_scoped_user_summary(memory_scope, user_id, user_memory)
-            else:
-                set_user_summary(user_id, user_memory)
             print(f"[Memory] Updated memory for user {user_id}")
             log_message("Jenny (System)", f"Updated memory for user {user_id}", None, channel_id)
 
@@ -213,7 +212,6 @@ async def run_memory_maintenance_for_channel(channel_id: str, generate_func: Opt
     voice_done = await run_memory_maintenance_for_stream(channel_id, "voice", generate_func, memory_scope)
 
     return text_done or voice_done
-
 
 
 

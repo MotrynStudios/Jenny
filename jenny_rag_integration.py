@@ -96,7 +96,8 @@ class JennyRAGSystem:
         summary_path = self.processed_data_path.parent.parent / "modpack_summary.json"
         try:
             summary_data = json.loads(summary_path.read_text(encoding="utf-8"))
-            self.mod_manifest = [item for item in summary_data.get("mods", [])
+            manifest_rows = summary_data if isinstance(summary_data, list) else summary_data.get("mods", [])
+            self.mod_manifest = [item for item in manifest_rows
                                  if isinstance(item, dict) and item.get("display_name")]
             mod_names = [str(item["display_name"]).strip() for item in self.mod_manifest]
         except (OSError, json.JSONDecodeError, TypeError):
@@ -497,4 +498,3 @@ if __name__ == "__main__":
     context = rag.get_rag_context(test_question)
     print(f"Question: {test_question}")
     print(f"Context: {context[:500]}")  # Print first 500 chars
-

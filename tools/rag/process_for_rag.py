@@ -64,8 +64,13 @@ class ModpackDataProcessor:
         if not lang_path.exists():
             return None
         
-        with open(lang_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        try:
+            with open(lang_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else None
+        except (OSError, json.JSONDecodeError) as error:
+            logger.warning("Could not read language data %s: %s", lang_path, error)
+            return None
     
     def load_recipes(self, mod_dir: Path) -> Optional[List[Dict[str, Any]]]:
         """Load recipe data from JSON file"""
@@ -73,8 +78,20 @@ class ModpackDataProcessor:
         if not recipes_path.exists():
             return None
         
-        with open(recipes_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        try:
+            with open(recipes_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return [row for row in data if isinstance(row, dict)]
+            if isinstance(data, dict):
+                nested = data.get("recipes")
+                if isinstance(nested, list):
+                    return [row for row in nested if isinstance(row, dict)]
+                return [data]
+            return []
+        except (OSError, json.JSONDecodeError) as error:
+            logger.warning("Could not read recipes %s: %s", recipes_path, error)
+            return []
     
     def load_advancements(self, mod_dir: Path) -> Optional[List[Dict[str, Any]]]:
         """Load advancement data from JSON file"""
@@ -82,8 +99,18 @@ class ModpackDataProcessor:
         if not advancements_path.exists():
             return None
         
-        with open(advancements_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        try:
+            with open(advancements_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return [row for row in data if isinstance(row, dict)]
+            if isinstance(data, dict):
+                nested = data.get("advancements")
+                return [row for row in nested if isinstance(row, dict)] if isinstance(nested, list) else [data]
+            return []
+        except (OSError, json.JSONDecodeError) as error:
+            logger.warning("Could not read advancements %s: %s", advancements_path, error)
+            return []
     
     def load_items_blocks(self, mod_dir: Path) -> Optional[Dict[str, List[str]]]:
         """Load items and blocks data from JSON file"""
@@ -105,6 +132,82 @@ class ModpackDataProcessor:
         except (OSError, json.JSONDecodeError) as error:
             logger.warning("Could not read TaCZ gun data %s: %s", path, error)
             return []
+
+    def load_structured_rows(self, mod_dir: Path, filename: str) -> List[Dict[str, Any]]:
+        """Load extractor-owned JSON row lists, tolerating older root shapes."""
+        path = mod_dir / filename
+        if not path.exists():
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                return [row for row in data if isinstance(row, dict)]
+            if isinstance(data, dict):
+                return [data]
+        except (OSError, json.JSONDecodeError) as error:
+            logger.warning("Could not read structured data %s: %s", path, error)
+        return []
+
+    def create_custom_data_documents(self, mod_id: str, display_name: str,
+                                     rows: List[Dict[str, Any]]) -> List[Document]:
+        """Flatten custom per-mod JSON records into searchable evidence notes."""
+        documents = []
+        for row in rows:
+            fields = []
+
+            def visit(value: Any, prefix: str = "data") -> None:
+                if isinstance(value, dict):
+                    for key, nested in value.items():
+                        if not str(key).startswith("_"):
+                            visit(nested, f"{prefix}.{key}")
+                elif isinstance(value, list):
+                    for index, nested in enumerate(value):
+                        visit(nested, f"{prefix}[{index}]")
+                elif value is not None and str(value).strip():
+                    fields.append(f"{prefix}: {value}")
+
+            visit(row.get("data", row))
+            path = str(row.get("_data_path", "unknown JSON data"))
+            text = (f"Custom structured data from {display_name} ({mod_id})\n"
+                    f"Namespace: {row.get('_namespace', mod_id)}\n"
+                    f"Category: {row.get('_category', 'custom')}\nSource: {path}\n" + "\n".join(fields))
+            if not fields:
+                continue
+            safe_path = re.sub(r"[^a-zA-Z0-9_-]+", "_", path)[:140]
+            documents.append(Document(text=text[:6000], metadata={
+                "mod_id": mod_id, "display_name": display_name,
+                "document_type": "mod_data", "data_category": str(row.get("_category", "custom")),
+                "namespace": str(row.get("_namespace", mod_id)), "source_path": path,
+            }, doc_id=f"{mod_id}_custom_{safe_path}"))
+        return documents
+
+    def create_asset_documents(self, mod_id: str, display_name: str,
+                               rows: List[Dict[str, Any]], language_data: Dict[str, str]) -> List[Document]:
+        """Index image/model identifiers and localization hints, not image pixels."""
+        if not rows:
+            return []
+        documents = []
+        asset_lines = []
+        for row in rows[:500]:
+            asset_type = str(row.get("_asset_type", "asset"))
+            asset_path = str(row.get("_asset_path", "unknown"))
+            identifier = str(row.get("_asset_id", asset_path))
+            normalized_id = identifier.replace("/", ".")
+            name_hints = [value for key, value in language_data.items()
+                          if normalized_id in key and isinstance(value, str)]
+            references = row.get("textures", [])
+            localized = ", ".join(name_hints[:2]) or "no localized name"
+            texture_refs = ", ".join(map(str, references[:8])) if isinstance(references, list) else ""
+            asset_lines.append(f"{asset_type}: {identifier} | {localized} | {asset_path}" +
+                               (f" | textures: {texture_refs}" if texture_refs else ""))
+        text = (f"Visual asset reference manifest for {display_name} ({mod_id}). "
+                "This describes resource names and model links only; it does not describe the visual appearance of the image pixels.\n" +
+                "\n".join(asset_lines))
+        documents.append(Document(text=text[:12000], metadata={
+            "mod_id": mod_id, "display_name": display_name,
+            "document_type": "asset_reference", "asset_count": len(asset_lines),
+        }, doc_id=f"{mod_id}_asset_manifest"))
+        return documents
 
     def create_gun_data_documents(self, mod_id: str, display_name: str,
                                   rows: List[Dict[str, Any]]) -> List[Document]:
@@ -390,6 +493,8 @@ class ModpackDataProcessor:
         recipes = self.load_recipes(mod_dir) or []
         advancements = self.load_advancements(mod_dir) or []
         gun_data = self.load_gun_data(mod_dir)
+        custom_data = self.load_structured_rows(mod_dir, "custom_data.json")
+        asset_data = self.load_structured_rows(mod_dir, "asset_manifest.json")
         
         mod_id = metadata.get('mod_id', mod_dir.name)
         display_name = metadata.get('display_name', mod_id)
@@ -422,6 +527,10 @@ class ModpackDataProcessor:
 
         if gun_data:
             documents.extend(self.create_gun_data_documents(mod_id, display_name, gun_data))
+        if custom_data:
+            documents.extend(self.create_custom_data_documents(mod_id, display_name, custom_data))
+        if asset_data:
+            documents.extend(self.create_asset_documents(mod_id, display_name, asset_data, language_data))
         
         return documents
     
