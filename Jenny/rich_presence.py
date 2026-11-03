@@ -16,15 +16,16 @@ if TYPE_CHECKING:
     from discord.ext.commands import Bot
 
 
-PRESENCE_UPDATE_INTERVAL_SECONDS = 60
+PRESENCE_UPDATE_INTERVAL_SECONDS = 15
 _PROCESS_STARTED_MONOTONIC = time.monotonic()
 
 
 def _format_elapsed(seconds: float) -> str:
     """Format process uptime as a compact, stable activity-title suffix."""
-    total_minutes = max(0, int(seconds // 60))
-    hours, minutes = divmod(total_minutes, 60)
-    return f"{hours:02d}h {minutes:02d}m"
+    total_seconds = max(0, int(seconds))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
 async def run_minecraft_presence(bot: "Bot") -> None:
@@ -35,12 +36,14 @@ async def run_minecraft_presence(bot: "Bot") -> None:
     while not bot.is_closed():
         elapsed = time.monotonic() - _PROCESS_STARTED_MONOTONIC
         elapsed_text = _format_elapsed(elapsed)
-        activity = discord.Game(
-            name=f"Minecraft Singleplayer 26.3 | {elapsed_text}"
+        activity = discord.Activity(
+            type=discord.ActivityType.playing,
+            name="Minecraft",
+            state=f"Singleplayer · Version 26.3 · {elapsed_text}",
         )
         try:
             await bot.change_presence(activity=activity)
-            print(f"[PRESENCE] Playing Minecraft Singleplayer 26.3, uptime {elapsed_text}")
+            print(f"[PRESENCE] Playing Minecraft | Singleplayer · Version 26.3 · {elapsed_text}")
         except (discord.HTTPException, discord.DiscordException) as error:
             # Presence is cosmetic; a transient gateway/API failure should not
             # take down message handling or the rest of the bot.
