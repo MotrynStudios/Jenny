@@ -1851,8 +1851,8 @@ def initialize_changelog() -> None:
     """Ensure the current public release entry exists without deleting history."""
     try:
         add_changelog_entry(
-            version="0.87",
-            description="Jenny 0.87 mention-only chat, broader vision input, stronger modpack retrieval, and activity reporting",
+            version="0.88",
+            description="Jenny 0.88 repository release with the 0.87 chat, vision, retrieval, and activity features",
             features=[
                 "Mention-triggered server chat and natural conversations in direct messages",
                 "Voice conversations with speech recognition, spoken replies, and chat, voice, or both reply modes",
@@ -1907,7 +1907,7 @@ def initialize_changelog() -> None:
             ],
             entry_type="release",
         )
-        print("[Changelog] Current release entry ensured at version 0.87")
+        print("[Changelog] Current release entry ensured at version 0.88")
     except Exception as error:
         print(f"[Changelog] Error initializing changelog: {error}")
 
@@ -1936,4 +1936,3 @@ def get_latest_changelog() -> Optional[Dict[str, Any]]:
             "type": row["type"]
         }
     return None
-
