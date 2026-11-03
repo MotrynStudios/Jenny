@@ -114,7 +114,7 @@ Server text summaries are scoped to their text channel; voice summaries are scop
 
 The default 90-day cleanup removes old detailed message, voice, usage, profile-history, image-context, and short conversation-history records. Rolling summaries are retained until the user clears their memory with `/forgetmydata` or an administrator clears their history. This lets Jenny remember useful context without keeping every raw conversation indefinitely.
 
-See [CHANGELOG.md](CHANGELOG.md) for Jenny's current 0.87 feature list. `/health` checks the Discord connection, Python API, optional voice service, local RAG corpus, log channel permissions, and Message Content Intent configuration. `/mods` and `/trivia` use the locally extracted mod summary; pack trivia does not ask an AI model to invent quiz facts.
+See [CHANGELOG.md](CHANGELOG.md) for Jenny's current 0.88 release notes. `/health` checks the Discord connection, Python API, optional voice service, local RAG corpus, log channel permissions, and Message Content Intent configuration. `/mods` and `/trivia` use the locally extracted mod summary; pack trivia does not ask an AI model to invent quiz facts.
 
 Jenny's Minecraft Playing status is refreshed every 15 seconds and shows `Minecraft` with a second line for `Singleplayer · Version 26.3 · HH:MM:SS`. Discord's bot gateway presence supports basic activity status but does not expose the desktop game's custom artwork card controls. The provided grass-block image has been cleaned and saved as `Jenny/assets/minecraft_grass_block.png` for use in a supported client-side Rich Presence integration. The elapsed timer resets when the Python bot restarts.
 
@@ -147,4 +147,3 @@ requirements.txt          Python dependencies
 ```
 
 The two root-level Python modules are runtime components, not extraction tools. `jenny_api_server.py` connects the optional Node voice process to the already-running Python bot, and `jenny_rag_integration.py` is imported by the bot for live retrieval. The `tools/rag/` folder contains commands that an owner runs to build or refresh local modpack data.
-
