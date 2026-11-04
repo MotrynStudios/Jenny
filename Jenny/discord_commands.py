@@ -746,7 +746,7 @@ async def start_cached_trivia_question(message: discord.Message, cached: dict[st
     update_command_output(int(cached["id"]), {"status": "active", "mode": "solo", "index": index, "questions": questions, "scores": payload.get("scores", {})})
 
 
-    async def start_trivia_message(message: discord.Message, difficulty: str = "medium", rounds: int = 5,
+async def start_trivia_message(message: discord.Message, difficulty: str = "medium", rounds: int = 5,
                                mode: str = "party"):
     try:
         questions = await make_pack_trivia(difficulty, rounds)
