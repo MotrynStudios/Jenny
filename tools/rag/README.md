@@ -64,7 +64,9 @@ Extraction requests up to 100 questions each for descriptions, recipes, and item
 
 Questions live in `data/trivia_cache.sqlite3`. A source key ties each question to a fact in the current extraction. Rebuilding reuses matching questions and fills missing slots. Older uncategorized questions are left in the database for solve history. Shortfalls are printed per category when facts or provider quota run out.
 
-Use `build_index.py --trivia-only` to fill the question bank from existing extracted files, or `build_index.py --skip-trivia` to build the search index without sending model requests. Recipes in trivia use supported crafting, cooking, and stonecutting layouts with readable item names.
+Use `build_index.py --trivia-only` to fill the question bank from existing extracted files, or `build_index.py --skip-trivia` to build the search index without sending model requests. Server administrators can also use `/generatetrivia` to request up to 100 fresh questions for a selected category and difficulty. Recipe clues use supported crafting, cooking, stonecutting, smithing, and TaCZ workbench layouts.
+
+Mob coverage is partial. Search can find extracted mob-related data such as entity loot tables, tags, biome modifiers, and texture references when a mod ships them in supported layouts. The extractor does not build a dedicated mob registry or derive health, attacks, behavior, or spawn rules from Java code.
 
 ## Build resource use
 

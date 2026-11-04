@@ -17,7 +17,7 @@ For account setup and current quotas, see [API keys and free usage](README.md#ap
 | `TAVILY_API_KEY_BACKUP` | Optional web search fallback | A second authorized Tavily key. |
 | `DEEPGRAM_API_KEY` | Spoken replies | A Deepgram key with access to the selected Flux voice. |
 | `GITHUB_REPORT_TOKEN` | Optional `/report` posting | A fine-grained GitHub token limited to the target repository with **Issues: write**. Blank disables posting. |
-| `GITHUB_REPORT_REPO` | Optional `/report` destination | Repository in `owner/name` form. Defaults to `MotrynStudios/Jenny`. Use your own issue tracker for a fork. |
+| `GITHUB_REPORT_REPO` | Optional `/report` destination | Repository in `owner/name` form. Defaults to `MotrynStudios/Jenny-AI-Discord-Bot`. Use your own issue tracker for a fork. |
 
 To enable reports, create a [fine-grained token](https://github.com/settings/personal-access-tokens/new) for the issue tracker only. Ensure Issues are enabled. The form submits its title and details to GitHub under the token account and returns the issue link privately. It does not attach Discord messages or account IDs. Only enter information suitable for a public issue. See [GitHub's required permissions](https://docs.github.com/en/rest/issues/issues#create-an-issue).
 

@@ -2135,20 +2135,27 @@ def get_changelog() -> List[Dict[str, Any]]:
 
 # Function to initialize changelog entries (call this after bot is fully started)
 def initialize_changelog() -> None:
-    """Ensure the current public release entry exists without deleting history."""
+    """Import the current Markdown release notes without deleting stored history."""
+    version = "0.94bf"
     try:
+        markdown = (_SCRIPT_DIR.parent / "CHANGELOG.md").read_text(encoding="utf-8")
+        release = markdown.partition(f"\n## {version}\n")[2].partition("\n## ")[0]
+        features, changes = [], []
+        section = changes
+        for line in release.splitlines():
+            if line.startswith("### "):
+                section = features if line == "### Added" else changes
+            elif line.startswith("- "):
+                section.append(line[2:])
+        if not features and not changes:
+            raise ValueError(f"Missing notes for version {version} in CHANGELOG.md")
         add_changelog_entry(
-            version="0.94f",
-            description="Faster exact recipe lookups, improved voice feedback, and Discord issue reporting",
-            features=[
-                "Opt-in /report form, mod content browser, recipe autocomplete, and typed trivia banks",
-            ],
-            changes=[
-                "Fixed cold exact recipe lookups, recipe web search, duplicate replies, and stuck voice joins",
-            ],
+            version=version,
+            description="Recipe trivia, question bank tools, and the new GitHub repository name",
+            features=features,
+            changes=changes,
             entry_type="release",
         )
-        print("[Changelog] Current release entry ensured at version 0.94f")
     except Exception as error:
         print(f"[Changelog] Error initializing changelog: {error}")
 

@@ -2,6 +2,8 @@
 
 Jenny is a self-hosted Discord AI bot with memory, voice chat, image understanding, and a Minecraft modpack library. She can keep up with a conversation, look up a recipe in your pack, or run a Discord command when you ask in plain English.
 
+Jenny started as a goofy nod to the character from the original Minecraft Jenny Mod. She shares the name, with an adapted personality and character traits for Discord. This is an independent project with no sexual content. Jenny is here to hang out and help you play Minecraft, whether you're figuring out a recipe or exploring a new modpack.
+
 You only need to know how to copy API keys, create a Discord bot, and run a few terminal commands. Start with text chat and add voice, web search, or Minecraft data when you want them.
 
 **Jenny is a young project and is still in development.** The RAG system has been tested with **Minecraft 1.21.1 NeoForge mods**. Other mods, mod loaders and Minecraft versions may work, but they have not all been tested. Some data may be missing or extracted incorrectly. If you find a problem, please [report it](SUPPORT.md).
@@ -42,15 +44,15 @@ You only need to know how to copy API keys, create a Discord bot, and run a few 
 ## Quick start
 
 1. Install [Python 3.12](https://www.python.org/downloads/) and [Git](https://git-scm.com/downloads). [Node.js](https://nodejs.org/en/download) 22.12 or newer and [FFmpeg](https://ffmpeg.org/download.html) are for the optional voice service.
-2. Clone [Jenny on GitHub](https://github.com/MotrynStudios/Jenny) or download the ZIP and open a terminal in the project folder.
+2. Clone [Jenny on GitHub](https://github.com/MotrynStudios/Jenny-AI-Discord-Bot) or download the ZIP and open a terminal in the project folder.
 3. [Create a Discord bot](#create-and-invite-your-discord-bot) and get one [text model API key](#api-keys-and-free-usage).
 4. Create a virtual environment, install the dependencies, and copy `.env.example` to `.env`.
 
 Windows PowerShell:
 
 ~~~powershell
-git clone https://github.com/MotrynStudios/Jenny.git
-cd Jenny
+git clone https://github.com/MotrynStudios/Jenny-AI-Discord-Bot.git
+cd Jenny-AI-Discord-Bot
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 Copy-Item .env.example .env
@@ -147,6 +149,8 @@ Put your mod JARs in `mods/` and instance config files in `config/`, or pass the
 
 This extracts files, creates searchable documents, and builds a local vector index. Run without `--skip-trivia` to also build the trivia bank, or use `--trivia-only` after an existing extraction. Trivia generation uses your model quota. It aims for 100 questions each for descriptions, recipes, and items/blocks, subject to usable local evidence and provider availability. Read the [RAG guide](tools/rag/README.md) for supported formats, flags, and troubleshooting. Restart Jenny after refreshing the index.
 
+Mixed trivia gives roughly half its questions to recipes when enough are available. A server administrator can run `/generatetrivia count:100 category:recipes difficulty:medium` to add questions to the installation's shared bank. Results may be lower than requested when there are too few unused clues or the model providers cannot finish.
+
 Jenny searches extracted data for installed pack facts. Recipe cards use source patterns for grids and list the materials and bench for supported custom recipes such as TaCZ. The **Web search** button accepts a query or uses the current result if left blank. Web results are external references and may describe a different game version or pack.
 
 ## Commands
@@ -155,8 +159,8 @@ Use `/help` to see commands you can run in the current context. You can also ask
 
 | Area | Commands |
 | --- | --- |
-| Setup, health and feedback | `/help`, `/health`, `/report`, `/setmainchannel`, `/getmainchannel`, `/setlogschannel`, `/getlogschannel`, `/togglejenny`, `/models`, `/setmodel`, `/changelog` |
-| Minecraft | `/mods`, `/modcontents`, `/recipe`, `/searchpack`, `/trivia`, `/trivialeaderboard` |
+| Setup, health and feedback | `/help`, `/health`, `/invite`, `/report`, `/setmainchannel`, `/getmainchannel`, `/setlogschannel`, `/getlogschannel`, `/togglejenny`, `/models`, `/setmodel`, `/changelog` |
+| Minecraft | `/mods`, `/modcontents`, `/recipe`, `/searchpack`, `/trivia`, `/trivialeaderboard`, `/generatetrivia` (admin) |
 | Voice | `/joinvc`, `/leavevc`, `/voicestatus`, `/replymode`, `/voicetimes` |
 | People and roles | `/serverinfo`, `/user`, `/profile`, `/avatar`, `/roles`, `/profilehistory`, `/recentchanges`, `/finduser`, `/lastseen`, `/assignrole`, `/removerole`, `/refreshprofiles` |
 | Memory and usage | `/searchchat`, `/summarize`, `/mymemory`, `/forgetmydata`, `/forgetme`, `/myusage`, `/tokenusage` |
@@ -214,6 +218,6 @@ See the [file-by-file guide](PROJECT.md) for the runtime, extraction tools, setu
 
 ## Support and license
 
-Open a [GitHub issue](https://github.com/MotrynStudios/Jenny/issues/new/choose), contact **theinevitableinvincible** on Discord, or email [motrynstudios@gmail.com](mailto:motrynstudios@gmail.com). Bugs, extraction reports, questions, suggestions, collaborations, and hiring inquiries are welcome. See [support](SUPPORT.md) for what to include and [security reporting](SECURITY.md) for private vulnerability reports.
+Open a [GitHub issue](https://github.com/MotrynStudios/Jenny-AI-Discord-Bot/issues/new/choose), contact **theinevitableinvincible** on Discord, or email [motrynstudios@gmail.com](mailto:motrynstudios@gmail.com). Bugs, extraction reports, questions, suggestions, collaborations, and hiring inquiries are welcome. See [support](SUPPORT.md) for what to include and [security reporting](SECURITY.md) for private vulnerability reports.
 
 Jenny is released under the [MIT License](LICENSE), copyright Mohamed Ayman Elnashar. Preserve the copyright and license notice when redistributing the code.

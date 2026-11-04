@@ -2,7 +2,7 @@
 
 Jenny is still in development. Reports about bugs, incomplete mod extraction, setup problems, and suggestions are welcome.
 
-- [Open a GitHub issue](https://github.com/MotrynStudios/Jenny/issues/new/choose) for a reproducible problem or feature request.
+- [Open a GitHub issue](https://github.com/MotrynStudios/Jenny-AI-Discord-Bot/issues/new/choose) for a reproducible problem or feature request.
 - Use `/report` in a server where the owner has enabled GitHub issue submission. The form posts the details you enter to the configured public tracker.
 - Contact **theinevitableinvincible** on Discord for questions, suggestions, collaboration, or hiring.
 - Email [motrynstudios@gmail.com](mailto:motrynstudios@gmail.com) if you prefer to report a bug or get help by email.
@@ -11,4 +11,4 @@ Include the Jenny version or commit, your operating system, Python and Node vers
 
 For an empty RAG index, check the [build guide](tools/rag/README.md) and share the last relevant lines from `logs/extraction.log`, `logs/processing.log`, and `logs/jenny_rag.log`. For voice issues, share the part of `logs/voice-runtime.log` from the failed turn or join. Remove credentials, user IDs, private chats, transcripts, and private pack files.
 
-Use the [private vulnerability report](https://github.com/MotrynStudios/Jenny/security/advisories/new) for security issues. See [SECURITY.md](SECURITY.md).
+Use the [private vulnerability report](https://github.com/MotrynStudios/Jenny-AI-Discord-Bot/security/advisories/new) for security issues. See [SECURITY.md](SECURITY.md).

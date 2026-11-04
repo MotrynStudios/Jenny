@@ -44,18 +44,18 @@ from database import (
 from utils import sanitize_final_reply
 from ai import get_model_configuration, set_active_model
 from trivia_cache import record_solve, average_solve_seconds
-from trivia_bank import CATEGORIES, make_pack_trivia
+from trivia_bank import CATEGORIES, DIFFICULTIES, generate_extra_trivia, make_pack_trivia
 from pack_browser import (DATA as PACK_DATA, clean_name, inventory, item_name, matching_choices,
                           mod_manifest, read_json, resource_id, resources)
 from search import perform_search
-from issue_reporting import ReportIssueModal, report_repository
+from issue_reporting import DEFAULT_REPOSITORY, ReportIssueModal, report_repository
 from database import claim_trivia_next
 import math
 
 # API configuration
 PYTHON_API_URL = "http://127.0.0.1:8000"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DM_COMMANDS = {"help", "changelog", "health", "models", "mods", "modcontents", "trivia", "recipe", "searchpack", "mymemory", "forgetmydata", "myusage"}
+DM_COMMANDS = {"help", "changelog", "health", "invite", "models", "mods", "modcontents", "trivia", "recipe", "searchpack", "mymemory", "forgetmydata", "myusage"}
 _PACK_DOCUMENTS_CACHE: list[dict[str, Any]] = []
 _PACK_DOCUMENTS_MTIME: Optional[int] = None
 
@@ -990,6 +990,8 @@ class ActivityPeriodView(discord.ui.View):
 def setup_commands(bot):
     """Register all of Jenny's slash commands (the ones that show up when you type '/')."""
     tree = bot.tree
+    trivia_start_lock = asyncio.Lock()
+    trivia_job = None
 
     @tree.command(name="setmainchannel", description="Set this channel as Jenny's main chat channel")
     @app_commands.default_permissions(administrator=True)
@@ -1139,6 +1141,15 @@ def setup_commands(bot):
             )
             await interaction.response.send_message(embed=embed)
 
+    @tree.command(name="invite", description="Open Jenny's GitHub repository")
+    async def invite(interaction: discord.Interaction):
+        view = discord.ui.View()
+        view.add_item(discord.ui.Button(label="Open Jenny on GitHub", url=f"https://github.com/{DEFAULT_REPOSITORY}"))
+        embed = discord.Embed(title="Jenny on GitHub",
+                              description="Get the source code, read the setup guide, or join the community discussions.",
+                              color=discord.Color.blurple())
+        await interaction.response.send_message(embed=embed, view=view)
+
     @tree.command(name="report", description="Open a form to submit a public GitHub issue")
     @app_commands.guild_only()
     async def report(interaction: discord.Interaction):
@@ -1148,7 +1159,8 @@ def setup_commands(bot):
             await interaction.response.send_message("Use /report to open the form and choose what to publish.")
         elif not repository or not token:
             await interaction.response.send_message(
-                "Discord reports are disabled on this installation. [Open an issue on GitHub](https://github.com/MotrynStudios/Jenny/issues/new/choose).",
+                "Discord reports are disabled on this installation. "
+                f"[Open an issue on GitHub](https://github.com/{repository or DEFAULT_REPOSITORY}/issues/new/choose).",
                 ephemeral=True,
             )
         else:
@@ -1421,6 +1433,49 @@ def setup_commands(bot):
                      category: str = "mixed", seconds: app_commands.Range[int, 5, 120] = TRIVIA_DEFAULT_SECONDS):
         await start_trivia_interaction(interaction, difficulty, rounds,
                                        mode if interaction.guild_id else "solo", category, seconds)
+
+    @tree.command(name="generatetrivia", description="Generate up to 100 extra questions for the shared trivia bank")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.describe(count="Number of new questions (1-100)", category="Type of question to generate",
+                           difficulty="Difficulty of the new questions")
+    @app_commands.choices(
+        difficulty=[app_commands.Choice(name=label.title(), value=label) for label in DIFFICULTIES],
+        category=[app_commands.Choice(name=label, value=key) for key, label in CATEGORIES.items()],
+    )
+    async def generatetrivia(interaction: discord.Interaction, count: app_commands.Range[int, 1, 100],
+                             category: str = "recipes", difficulty: str = "medium"):
+        nonlocal trivia_job
+        if not interaction.guild or not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(embed=make_notice_embed("Only server administrators can generate extra questions."))
+            return
+        if not interaction.channel:
+            await interaction.response.send_message(embed=make_notice_embed("Trivia generation needs a channel to post the result."))
+            return
+
+        async def generate_and_report():
+            try:
+                added = await generate_extra_trivia(category, difficulty, count)
+                message = f"Added **{added}/{count}** new {difficulty} questions in **{CATEGORIES[category]}**."
+                if added < count:
+                    message += "\nThe pack may have too few unused clues, or the model providers could not finish the batch."
+            except Exception as error:
+                print(f"[TRIVIA] Could not finish {category}/{difficulty} generation: {type(error).__name__}: {error}")
+                message = "I couldn't finish generating questions. Any questions already saved are still in the bank."
+            try:
+                await interaction.channel.send(embed=make_notice_embed(message))
+            except discord.HTTPException as error:
+                print(f"[TRIVIA] Could not post generation result: {error}")
+
+        async with trivia_start_lock:
+            if trivia_job and not trivia_job.done():
+                await interaction.response.send_message(embed=make_notice_embed("Trivia generation is already running. Try again when it finishes."))
+                return
+            await interaction.response.send_message(embed=make_notice_embed(
+                f"Generating up to **{count}** new {difficulty} questions in **{CATEGORIES[category]}**. I'll post the result here."
+            ))
+            trivia_job = asyncio.create_task(generate_and_report())
+
     @tree.command(name="trivialeaderboard", description="Show the server's modpack trivia leaderboard")
     async def trivialeaderboard(interaction: discord.Interaction):
         if not interaction.guild_id:
@@ -1548,7 +1603,7 @@ def setup_commands(bot):
     @tree.command(name="help", description="Show commands you can use and how to talk to Jenny")
     async def help_command(interaction: discord.Interaction):
         admin_only = {
-            "assignrole", "removerole", "forgetme", "refreshprofiles", "setlogschannel",
+            "assignrole", "removerole", "forgetme", "generatetrivia", "refreshprofiles", "setlogschannel",
             "setmainchannel", "setmodel", "tokenusage", "togglejenny", "voicetimes",
         }
         is_admin = bool(interaction.guild and interaction.user.guild_permissions.administrator)

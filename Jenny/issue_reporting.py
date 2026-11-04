@@ -10,12 +10,14 @@ import discord
 import requests
 
 
-DEFAULT_REPOSITORY = "MotrynStudios/Jenny"
+DEFAULT_REPOSITORY = "MotrynStudios/Jenny-AI-Discord-Bot"
 _attempts = deque()
 
 
 def report_repository():
     repository = os.getenv("GITHUB_REPORT_REPO", "").strip() or DEFAULT_REPOSITORY
+    if repository.casefold() == "motrynstudios/jenny":
+        return DEFAULT_REPOSITORY
     if not re.fullmatch(r"[A-Za-z0-9-]+/[A-Za-z0-9_.-]+", repository):
         return None
     return repository

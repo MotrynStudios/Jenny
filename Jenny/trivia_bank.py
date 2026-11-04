@@ -9,6 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from ai import generate_pack_trivia
+from pack_browser import recipe_rows
 from trivia_cache import add_questions, bank_questions
 
 DATA_ROOT = Path(__file__).resolve().parents[1] / "data"
@@ -31,7 +32,11 @@ def _name(value, labels):
         localized = labels.get(f"{prefix}.{namespace}.{name}")
         if isinstance(localized, str):
             return localized
-    return name.replace("_", " ").title()
+    for kind in ("gun", "ammo", "attachment"):
+        localized = labels.get(f"{namespace}.{kind}.{name}.name")
+        if isinstance(localized, str):
+            return localized
+    return name.replace("_", " ").replace("/", " ").title()
 
 
 def _ingredient(node, labels):
@@ -39,9 +44,11 @@ def _ingredient(node, labels):
         choices = [_ingredient(value, labels) for value in node]
         return " or ".join(choices) if choices and all(choices) else ""
     if isinstance(node, dict):
-        if node.get("tag"):
-            return "any " + _name(node["tag"], labels)
-        node = node.get("item") or node.get("id")
+        tag = node.get("tag")
+        value = "#" + tag.lstrip("#") if isinstance(tag, str) else node.get("item") or node.get("id")
+        name = _ingredient(value, labels)
+        count = node.get("count")
+        return f"{count} × {name}" if name and type(count) is int and count > 1 else name
     if isinstance(node, str) and node.startswith("#"):
         return "any " + _name(node[1:], labels)
     return _name(node, labels)
@@ -51,7 +58,7 @@ def _recipe_fact(recipe, labels):
     if not isinstance(recipe, dict):
         return None
     kind = str(recipe.get("type", "")).removeprefix("minecraft:")
-    output = recipe.get("result")
+    output = recipe.get("result") or recipe.get("output")
     if isinstance(output, dict):
         output = output.get("id") or output.get("item")
     answer = _name(output, labels)
@@ -67,15 +74,26 @@ def _recipe_fact(recipe, labels):
         grid = " / ".join("".join(row) for row in pattern)
         legend = ", ".join(f"{symbol} = {value}" for symbol, value in sorted(names.items()))
         return answer, f"Shaped crafting: [{grid}] ({legend})"
-    if kind not in {"crafting_shapeless", "smelting", "blasting", "smoking", "campfire_cooking", "stonecutting"}:
+    if kind == "tacz:gun_smith_table_crafting":
+        ingredients = recipe.get("materials")
+        method = "Gun Smith Table"
+    elif kind == "smithing_transform":
+        ingredients = [recipe.get(field) for field in ("template", "base", "addition")]
+        method = "Smithing table"
+    elif kind == "crafting_shapeless":
+        ingredients = recipe.get("ingredients")
+        method = "Shapeless crafting"
+    elif kind in {"smelting", "blasting", "smoking", "campfire_cooking", "stonecutting"}:
+        ingredients = [recipe.get("ingredient")]
+        method = kind.replace("_", " ").capitalize()
+    else:
         return None
-    ingredients = recipe.get("ingredients") if kind == "crafting_shapeless" else [recipe.get("ingredient")]
     if not isinstance(ingredients, list) or not ingredients:
         return None
     names = [_ingredient(value, labels) for value in ingredients]
     if not all(names):
         return None
-    return answer, f"{kind.replace('_', ' ').capitalize()}: {', '.join(sorted(names))}"
+    return answer, f"{method}: {', '.join(sorted(names))}"
 
 
 def load_facts(root=DATA_ROOT):
@@ -131,14 +149,14 @@ def _read_facts(root, manifest_revision):
                     if isinstance(label, str) and label.strip():
                         item_sources.setdefault(f"{kind[:-1].capitalize()}: {label.strip()}", set()).add(name)
         recipes = _load(folder / "recipes.json", [])
-        if isinstance(recipes, dict):
-            recipes = recipes.get("recipes", [recipes])
-        if isinstance(recipes, list):
-            for recipe in recipes:
-                row = _recipe_fact(recipe, labels)
-                if row:
-                    answer, evidence = row
-                    recipe_sources.setdefault(evidence, set()).add(answer)
+        custom = _load(folder / "custom_data.json", [])
+        custom_recipes = [row.get("data") for row in custom if isinstance(row, dict)
+                          and row.get("_category") == "custom_recipe"] if isinstance(custom, list) else []
+        for recipe, _, _ in recipe_rows([recipes, custom_recipes]):
+            row = _recipe_fact(recipe, labels)
+            if row:
+                answer, evidence = row
+                recipe_sources.setdefault(evidence, set()).add(answer)
     for category, sources in (("recipes", recipe_sources), ("items", item_sources)):
         for evidence, answers in sources.items():
             if len(answers) == 1:
@@ -146,31 +164,55 @@ def _read_facts(root, manifest_revision):
     return facts
 
 
-async def fill_bank(facts, category, difficulty, count, path, *, extraction=False, exclude=()):
+async def fill_bank(facts, category, difficulty, count, path, *, extraction=False, exclude=(), additional=False):
     """Generate in small batches. A cached question always keeps its source identity."""
     eligible = facts.keys() - set(exclude)
     cached = await asyncio.to_thread(bank_questions, category, difficulty, eligible, path)
     known = {row["fact_key"] for row in cached}
     available = list(eligible - known)
-    attempts = (count + 9) // 10 + 3 if extraction else 1
+    attempts = (count + 9) // 10 + 3 if extraction or additional else 1
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 720 if additional else None
+    total_added = 0
     for _ in range(attempts):
-        remaining = count - len(cached)
+        remaining = count - (total_added if additional else len(cached))
         if remaining <= 0 or not available:
             break
-        size = min(12 if extraction else 20, remaining)
+        size = min(12 if extraction or additional else 20, remaining, len(available))
         selected = random.sample(available, min(len(available), size + 6))
-        rows = await generate_pack_trivia({key: facts[key] for key in selected}, category, difficulty,
-                                          size, extraction=extraction)
+        try:
+            timeout = max(0, deadline - loop.time()) if deadline is not None else None
+            rows = await asyncio.wait_for(
+                generate_pack_trivia({key: facts[key] for key in selected}, category, difficulty,
+                                     size, extraction=extraction),
+                timeout,
+            )
+        except TimeoutError:
+            print(f"[TRIVIA] {category}/{difficulty}: generation deadline reached")
+            break
         if not rows:
             break
         added = await asyncio.to_thread(add_questions, rows, path)
+        total_added += added
         cached = await asyncio.to_thread(bank_questions, category, difficulty, eligible, path)
         known.update(row["fact_key"] for row in cached)
         available = [key for key in available if key not in known]
-        print(f"[TRIVIA] {category}/{difficulty}: {len(cached)}/{count} ready, {added} new")
+        print(f"[TRIVIA] {category}/{difficulty}: {len(cached)} ready, {total_added} added this run")
         if not added:
             break
-    return cached
+    return cached, total_added
+
+
+async def generate_extra_trivia(category, difficulty, count):
+    """Add fresh questions without overwriting existing clues or solve history."""
+    if category not in CATEGORIES or difficulty not in DIFFICULTIES or not 1 <= count <= 100:
+        raise ValueError("Choose a valid trivia category, difficulty and count between 1 and 100.")
+    corpus = await asyncio.to_thread(load_facts)
+    facts = corpus[category]
+    if len({row["answer"] for row in facts.values()}) < 2:
+        return 0
+    _, added = await fill_bank(facts, category, difficulty, count, DATA_ROOT / "trivia_cache.sqlite3", additional=True)
+    return added
 
 
 async def seed_trivia_bank(root):
@@ -179,7 +221,7 @@ async def seed_trivia_bank(root):
     for category, facts in corpus.items():
         total = 0
         for difficulty, target in zip(DIFFICULTIES, (34, 33, 33)):
-            rows = await fill_bank(facts, category, difficulty, target, path, extraction=True)
+            rows, _ = await fill_bank(facts, category, difficulty, target, path, extraction=True)
             total += min(len(rows), target)
         print(f"[TRIVIA] Extraction bank for {CATEGORIES[category]}: {total}/100 across difficulties")
 
@@ -199,12 +241,15 @@ async def make_pack_trivia(difficulty="medium", rounds=5, category="mixed", *, e
     if not categories:
         return []
     path = DATA_ROOT / "trivia_cache.sqlite3"
-    base, extra = divmod(rounds, len(categories))
+    # In mixed games, alternate recipe clues with the other available categories.
+    other = [kind for kind in categories if kind != "recipes"]
+    rotation = [kind for alternate in other for kind in ("recipes", alternate)] if other and "recipes" in pools else categories
+    slots = (rotation * ((rounds + len(rotation) - 1) // len(rotation)))[:rounds]
     banks = {}
-    for index, kind in enumerate(categories):
-        count = base + (index < extra)
+    for kind in categories:
+        count = slots.count(kind)
         if count:
-            fresh = await fill_bank(corpus[kind], kind, difficulty, count, path, exclude=exclude)
+            fresh, _ = await fill_bank(corpus[kind], kind, difficulty, count, path, exclude=exclude)
             random.shuffle(fresh)
             if len(fresh) < count and exclude:
                 repeats = await asyncio.to_thread(bank_questions, kind, difficulty, set(exclude) & corpus[kind].keys(), path)
@@ -212,10 +257,19 @@ async def make_pack_trivia(difficulty="medium", rounds=5, category="mixed", *, e
                 banks[kind] = repeats + fresh  # Pop fresh questions first.
             else:
                 banks[kind] = fresh
+    # A short recipe bank must not cut the game short when another category
+    # has cached questions but received no slot in the initial rotation.
+    if sum(len(bank) for bank in banks.values()) < rounds:
+        for kind in categories:
+            if kind not in banks:
+                cached = await asyncio.to_thread(bank_questions, kind, difficulty,
+                                                 corpus[kind].keys() - set(exclude), path)
+                random.shuffle(cached)
+                banks[kind] = cached
     # Interleave categories while avoiding duplicate factual clues within a game.
     questions, used = [], set()
     while len(questions) < rounds and any(banks.values()):
-        for kind in categories:
+        for kind in rotation:
             bank = banks.get(kind, [])
             while bank and bank[-1]["fact_key"] in used:
                 bank.pop()
