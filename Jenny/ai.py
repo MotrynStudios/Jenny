@@ -257,7 +257,11 @@ async def generate_trivia_with_gemini(local_facts: List[Dict[str, str]], count: 
         payload = json.loads(content)
     except json.JSONDecodeError:
         start = content.find("{")
-        payload = json.loads(content[start:]) if start >= 0 else {}
+        try:
+            payload, _ = json.JSONDecoder().raw_decode(content[start:]) if start >= 0 else ({}, 0)
+        except json.JSONDecodeError as error:
+            print(f"[TRIVIA] Gemini returned incomplete JSON: {error}")
+            return []
     rows = payload.get("questions", []) if isinstance(payload, dict) else []
     return [row for row in rows if isinstance(row, dict)][:count]
 
