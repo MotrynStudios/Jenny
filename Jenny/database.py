@@ -645,18 +645,6 @@ def set_user_daily_summary(user_id: str, summary_date: str, summary: str) -> Non
     conn.close()
 
 
-def cleanup_expired_user_daily_summaries(days: int = 7) -> int:
-    """Drop dated summaries once their week-long context window has passed."""
-    days = max(1, min(int(days), 30))
-    cutoff = (datetime.now(timezone.utc).date() - timedelta(days=days - 1)).isoformat()
-    conn = get_connection()
-    cursor = conn.execute("DELETE FROM daily_user_memory WHERE summary_date < ?", (cutoff,))
-    deleted = max(0, cursor.rowcount)
-    conn.commit()
-    conn.close()
-    return deleted
-
-
 def get_combined_user_summary(user_id: str, scope_id: Optional[str] = None) -> str:
     """Read shared cross-context memory plus the current scope's legacy memory.
 
