@@ -2,9 +2,11 @@
 Prompt builder for Jenny bot - constructs modular prompts based on operation type
 """
 
+import json
 from typing import List, Dict, Optional
 from Prompts import CORE_PROMPT, TEXT_MODE_PROMPT, VOICE_MODE_PROMPT, MEMORY_MAINTENANCE_PROMPT
-from database import format_user_profile_for_context, get_combined_user_summary
+from database import (format_user_profile_for_context, get_combined_user_summary,
+                      get_recent_user_daily_summaries)
 
 
 def build_text_prompt(
@@ -168,6 +170,8 @@ def build_memory_prompt(
     channel_id: Optional[str] = None,
     stream_type: str = "text",
     allowed_user_ids: Optional[List[str]] = None,
+    current_daily_user_summaries: Optional[Dict[str, Dict[str, str]]] = None,
+    allowed_summary_dates: Optional[Dict[str, List[str]]] = None,
 ) -> List[Dict[str, str]]:
     """
     Build prompt for memory maintenance operation
@@ -210,6 +214,15 @@ def build_memory_prompt(
                     "content": f"Current memory for user {user_id} (merge; max 100 tokens):\n{user_memory[:450]}"
                 })
 
+    if current_daily_user_summaries:
+        for user_id, summaries in current_daily_user_summaries.items():
+            if summaries:
+                dated_context = "\n".join(f"{day}: {summary}" for day, summary in sorted(summaries.items()))
+                messages.append({
+                    "role": "system",
+                    "content": f"Existing recent daily context for user {user_id}; merge only matching dates:\n{dated_context[:2500]}"
+                })
+
     # Add messages to summarize
     if stream_type in {"voice", "dm_voice"}:
         messages_text: str = "\n".join([
@@ -236,9 +249,12 @@ def build_memory_prompt(
     messages.append({
         "role": "user",
         "content": (
-            "Return valid JSON with channel_summary and user_memories for server streams. "
-            "For DM streams, return only user_memories. Use exact allowed user ID keys, never 'unknown'. "
-            "Keep channel_summary under 500 tokens and each user memory under 100 tokens."
+            "Return valid JSON with channel_summary, user_memories, and daily_summaries. "
+            "For DM streams, omit channel_summary. Use only the supplied user IDs and dates. "
+            f"Allowed daily summary dates: {json.dumps(allowed_summary_dates or {}, ensure_ascii=False)}. "
+            "daily_summaries must map user IDs to date-keyed concise summaries of conversation context for that date. "
+            "Keep recent summaries useful for the past week's follow-ups; keep user_memories durable and under 100 tokens. "
+            "Keep channel_summary under 500 tokens."
         )
     })
 
@@ -262,6 +278,7 @@ def get_relevant_user_context(user_ids: List[str], guild_id: Optional[str] = Non
         # The stable Discord user ID links their shared memory across DMs and
         # servers. Preserve local-scope memory while older rows migrate forward.
         user_memory = get_combined_user_summary(user_id, memory_scope)
+        recent_summaries = get_recent_user_daily_summaries(user_id, 7)
         
         # Profile history can be sizeable and is only needed for profile questions.
         profile_context: str = (format_user_profile_for_context(user_id, guild_id)
@@ -273,6 +290,9 @@ def get_relevant_user_context(user_ids: List[str], guild_id: Optional[str] = Non
             combined_context += profile_context + "\n"
         if user_memory:
             combined_context += f"Long-term memory: {user_memory}"
+        if recent_summaries:
+            recent_text = "\n".join(f"{day}: {summary}" for day, summary in sorted(recent_summaries.items()))
+            combined_context += f"\nRecent daily conversation summaries (last 7 days):\n{recent_text}"
         
         if combined_context.strip():
             user_contexts[user_id] = combined_context.strip()
