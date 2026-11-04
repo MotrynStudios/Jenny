@@ -41,6 +41,8 @@ from database import (
     update_command_output,
 )
 from utils import sanitize_final_reply
+from ai import generate_trivia_with_gemini
+from trivia_cache import question_count, add_questions, get_question_id, take_cached_questions, record_solve, average_solve_seconds
 
 # API configuration
 PYTHON_API_URL = "http://127.0.0.1:8000"
@@ -487,35 +489,54 @@ def _trivia_candidates() -> list[dict[str, str]]:
     return candidates
 
 
-def make_pack_trivia(owner_id: int, difficulty: str = "medium", rounds: int = 1,
-                     mode: str = "solo", guild_id: Optional[int] = None,
-                     conversation_id: Optional[str] = None):
-    """Build a quiz clue strictly from extracted metadata, items, or recipes."""
+async def make_pack_trivia(difficulty: str = "medium", rounds: int = 5):
+    """Generate locally grounded questions with Gemini and reuse the local cache."""
     candidates = list({item["name"].casefold(): item for item in _trivia_candidates()}.values())
     if len(candidates) < 4:
-        return None
-    source = {"easy": "description", "medium": "item", "hard": "recipe"}.get(difficulty, "item")
-    questions = []
-    random.shuffle(candidates)
-    for item in candidates:
-        answer = item["name"]
-        clue = item[source].strip()
-        if not clue:
+        return []
+    difficulty = difficulty.lower()
+    # Five is the standard game size; callers may request a longer game up to Discord's limit.
+    target = max(5, min(20, int(rounds)))
+    new_count = target if question_count() < 100 else max(1, (target + 1) // 2)
+    normalize = lambda value: re.sub(r"[^a-z0-9]", "", value.casefold())
+    informative = [item for item in candidates if any(item.get(key) for key in ("description", "item", "recipe"))]
+    facts = random.sample(informative or candidates, min(40, len(informative or candidates)))
+    grounded_text = normalize(json.dumps(facts, ensure_ascii=False))
+    raw_rows = await generate_trivia_with_gemini(facts, new_count, difficulty)
+    allowed = {item["name"].casefold(): item["name"] for item in candidates}
+    generated, seen = [], set()
+    for row in raw_rows:
+        answer = allowed.get(str(row.get("answer", "")).strip().casefold())
+        clue = str(row.get("question", "")).strip()
+        evidence = str(row.get("evidence", "")).strip()
+        clue_key = normalize(clue)
+        if not answer or not clue or not evidence or len(clue) > 420 or not clue_key:
             continue
-        if source != "description":
-            clue = re.sub(r"\b[\w.-]+:", "", clue).replace("_", " ").replace("/", " ")
-        # Reject clues that still spell out the answer after namespace removal.
-        normalize = lambda value: re.sub(r"[^a-z0-9]", "", value.casefold())
-        if not normalize(clue) or normalize(answer) in normalize(clue):
+        evidence_key = normalize(evidence)
+        if len(evidence_key) < 5 or evidence_key not in grounded_text:
             continue
-        options = random.sample([other["name"] for other in candidates if other is not item], 3) + [answer]
+        if normalize(answer) in clue_key or clue_key in seen:
+            continue
+        seen.add(clue_key)
+        options = random.sample([name for name in allowed.values() if name != answer], 3) + [answer]
         random.shuffle(options)
-        question = f"Which mod fits this clue? **{discord.utils.escape_markdown(clue[:450])}**"
-        questions.append({"question": question, "answer": answer, "options": options, "difficulty": difficulty})
-    if not questions:
-        return None
-    # Each question is used at most once per game.
-    return questions[:max(1, min(20, rounds))]
+        generated.append({"question": clue, "answer": answer, "options": options,
+                          "difficulty": difficulty, "id": None, "evidence": evidence})
+    add_questions(generated)
+    for row in generated:
+        row["id"] = get_question_id(row["question"])
+    cached_rows = take_cached_questions(target - len(generated), difficulty,
+                                        [row["question"] for row in generated]) if len(generated) < target else []
+    questions = generated[:target]
+    for row in cached_rows:
+        distractors = [name for name in allowed.values() if name.casefold() != row["answer"].casefold()]
+        if len(distractors) < 3:
+            continue
+        options = random.sample(distractors, 3) + [row["answer"]]
+        random.shuffle(options)
+        questions.append({"question": row["question"], "answer": row["answer"], "options": options,
+                          "difficulty": row["difficulty"], "id": row["id"], "evidence": row["evidence"]})
+    return questions[:target]
 
 
 class TriviaChoiceButton(discord.ui.Button):
@@ -557,7 +578,7 @@ class TriviaNextView(discord.ui.View):
         if interaction.user.id != self.owner_id:
             await interaction.response.send_message("Start your own solo trivia to play.")
             return
-        rows = make_pack_trivia(self.owner_id, self.questions[0]["difficulty"], len(self.questions), "solo")
+        rows = await make_pack_trivia(self.questions[0]["difficulty"], len(self.questions))
         if not rows:
             await interaction.response.send_message("I couldn't find enough local mod data for trivia.")
             return
@@ -619,6 +640,8 @@ class TriviaGameView(discord.ui.View):
             return
         row = self.questions[self.index]
         correct = chosen == row["answer"]
+        if correct:
+            record_solve(str(interaction.guild_id) if interaction.guild_id else None, interaction.user.id, row.get("id"), elapsed)
         if self.mode == "party":
             player = self.scores.setdefault(str(interaction.user.id), {"username": interaction.user.display_name, "points": 0})
             if not correct:
@@ -649,7 +672,12 @@ class TriviaGameView(discord.ui.View):
         result = f"{notice} Answer: **{self.questions[self.index]['answer']}**."
         next_round = None
         if self.mode == "solo":
+            guild_id = self.message.guild.id if self.message and self.message.guild else None
+            average = average_solve_seconds(str(guild_id) if guild_id else None)
+            if average is not None and "solved" in notice:
+                result += f"\nAverage solve time: **{average:.1f}s**."
             view = TriviaNextView(self.owner_id, self.questions, self.cache_id, next_index)
+            view.next_question.disabled = next_index >= len(self.questions)
             self._save("awaiting_next", next_index)
         elif next_index < len(self.questions):
             next_round = view = TriviaGameView(self.questions, self.owner_id, self.mode, self.scores, next_index, self.cache_id)
@@ -664,7 +692,9 @@ class TriviaGameView(discord.ui.View):
                 record_trivia_game(str(guild_id), self.scores, winners)
             scores = "\n".join(f"{player['username']}: {player['points']}" for _, player in ranked[:15])
             winner_names = ", ".join(self.scores[uid]["username"] for uid in winners[:10])
-            result += f"\n\n**Party finished** · Winner: {winner_names[:250] or 'Nobody'}\n{scores[:850]}"
+            average = average_solve_seconds(str(guild_id) if guild_id else None)
+            avg_line = f"\nAverage solve time: **{average:.1f}s**." if average is not None else ""
+            result += f"\n\n**Party finished** · Winner: {winner_names[:250] or 'Nobody'}{avg_line}\n{scores[:800]}"
             view = TriviaEndView(guild_id, self.questions[0]["difficulty"], len(self.questions))
             self._save("ended", next_index)
         try:
@@ -716,9 +746,14 @@ async def start_cached_trivia_question(message: discord.Message, cached: dict[st
     update_command_output(int(cached["id"]), {"status": "active", "mode": "solo", "index": index, "questions": questions, "scores": payload.get("scores", {})})
 
 
-async def start_trivia_message(message: discord.Message, difficulty: str = "medium", rounds: int = 1,
+    async def start_trivia_message(message: discord.Message, difficulty: str = "medium", rounds: int = 5,
                                mode: str = "party"):
-    questions = make_pack_trivia(message.author.id, difficulty, rounds, mode, message.guild.id if message.guild else None)
+    try:
+        questions = await make_pack_trivia(difficulty, rounds)
+    except Exception as error:
+        print(f"[TRIVIA] Gemini generation failed: {error}")
+        await message.reply("Gemini couldn't make trivia right now. Try again shortly.", mention_author=False)
+        return
     if not questions:
         await message.reply("I couldn’t find enough usable local mod data for that trivia difficulty.", mention_author=False)
         return
@@ -732,17 +767,24 @@ async def start_trivia_message(message: discord.Message, difficulty: str = "medi
 
 
 async def start_trivia_interaction(interaction: discord.Interaction, difficulty: str, rounds: int, mode: str):
-    questions = make_pack_trivia(interaction.user.id, difficulty, rounds, mode, interaction.guild_id)
+    if not interaction.response.is_done():
+        await interaction.response.defer()
+    try:
+        questions = await make_pack_trivia(difficulty, rounds)
+    except Exception as error:
+        print(f"[TRIVIA] Gemini generation failed: {error}")
+        await interaction.followup.send("Gemini couldn't make trivia right now. Try again shortly.")
+        return
     if not questions:
-        await interaction.response.send_message("I couldn’t find enough usable local mod data for that trivia difficulty.")
+        await interaction.followup.send("I couldn’t find enough usable local mod data for that trivia difficulty.")
         return
     view = TriviaGameView(questions, interaction.user.id, mode)
     cache_id = save_command_output(str(interaction.user.id), str(interaction.guild_id) if interaction.guild_id else None,
         str(interaction.channel_id), _output_conversation_id(interaction.user.id, interaction.guild_id, interaction.channel_id),
         "trivia", "Modpack trivia", {"status": "active", "mode": mode, "index": 0, "questions": questions, "scores": {}})
     view.cache_id = cache_id
-    await interaction.response.send_message(view.content(), view=view)
-    view.start(await interaction.original_response())
+    sent = await interaction.followup.send(view.content(), view=view, wait=True)
+    view.start(sent)
 
 
 class ActivityPeriodView(discord.ui.View):
@@ -1030,15 +1072,16 @@ def setup_commands(bot):
         await send_recipe_result(interaction, pages, delivery)
 
     @tree.command(name="trivia", description="Play timed modpack trivia solo or with the server")
-    @app_commands.describe(difficulty="Clue difficulty", rounds="How many questions (1-20)", mode="Solo or first-correct multiplayer")
+    @app_commands.describe(difficulty="Clue difficulty", rounds="How many questions (5-20)", mode="Solo or first-correct multiplayer")
     @app_commands.choices(difficulty=[app_commands.Choice(name="Easy · mod description", value="easy"),
         app_commands.Choice(name="Medium · item or block", value="medium"),
         app_commands.Choice(name="Hard · recipe", value="hard")],
         mode=[app_commands.Choice(name="Solo", value="solo"), app_commands.Choice(name="Multiplayer", value="party")])
-    async def trivia(interaction: discord.Interaction, difficulty: str = "medium", rounds: app_commands.Range[int, 1, 20] = 5,
-                     mode: str = "solo"):
+    async def trivia(interaction: discord.Interaction, difficulty: str = "medium", rounds: app_commands.Range[int, 5, 20] = 5,
+                     mode: str = "party"):
         if not interaction.guild_id:
             mode = "solo"
+        await interaction.response.defer()
         await start_trivia_interaction(interaction, difficulty, int(rounds), mode)
 
     @tree.command(name="trivialeaderboard", description="Show the server's modpack trivia leaderboard")
@@ -1772,7 +1815,15 @@ def setup_commands(bot):
             self.token_rows = get_token_usage(self.guild_id, self.user_id, since=since, limit=1000)
             self.service_rows = get_service_usage(self.guild_id, self.user_id, since=since)
             embed = self.make_embed()
-            if hasattr(self, "previous_page"):
+            can_page = self.guild_id is not None and self.user_id is None and len(self.token_rows) > 15
+            if not can_page:
+                self.remove_item(self.previous_page)
+                self.remove_item(self.next_page)
+            else:
+                if self.previous_page not in self.children:
+                    self.add_item(self.previous_page)
+                if self.next_page not in self.children:
+                    self.add_item(self.next_page)
                 self.previous_page.disabled = self.page <= 0
                 self.next_page.disabled = (self.page + 1) * 15 >= len(self.token_rows)
             if interaction.message is not None:
@@ -1968,3 +2019,4 @@ def setup_commands(bot):
                 await interaction.response.send_message(embed=embed, ephemeral=True)
         except discord.HTTPException as response_error:
             print(f"[COMMAND] Could not report command failure: {response_error}")
+

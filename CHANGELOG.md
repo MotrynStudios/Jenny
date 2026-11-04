@@ -1,5 +1,9 @@
 # Jenny changelog
 
+## Unreleased
+
+- Hide unused `/myusage` page controls, cache Gemini trivia in a separate database, and display average solve times.
+
 ## 0.93
 
 - Fixed trivia answer leaks and added public rounds with a live countdown and distinct solo and party rules.
@@ -182,3 +186,4 @@ Jenny's current public feature baseline. This list describes intended available 
 - Removed stale guild-scoped slash command registrations left by old test syncs; global commands are now the single source of command definitions.
 - Expanded RAG extraction to nested mod JARs, SNBT, and INI config files.
 - Discord does not expose a member's private profile bio to the bot API.
+

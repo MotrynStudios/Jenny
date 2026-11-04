@@ -2,6 +2,7 @@ import os
 import re
 import time
 import asyncio
+import json
 import base64
 import io
 import requests
@@ -230,6 +231,37 @@ async def generate_memory_maintenance(messages: List[Dict[str, str]],
     return "{}"
 
 
+async def generate_trivia_with_gemini(local_facts: List[Dict[str, str]], count: int,
+                                     difficulty: str = "medium") -> List[Dict[str, str]]:
+    """Ask Gemini to write pack trivia using only supplied extracted facts."""
+    if gemini is None:
+        raise RuntimeError("Gemini is not configured")
+    response = await gemini.chat.completions.create(
+        model=GEMINI_MODEL,
+        messages=[
+            {"role": "system", "content": (
+                "Write Minecraft modpack trivia from the supplied local evidence only. "
+                "Return strict JSON with a questions array. Each row has question, answer, and evidence. "
+                "The evidence value must be copied verbatim from one supplied fact field. "
+                "The answer must exactly be one supplied mod name. Never put the answer or its namespace ID "
+                "in the question. Do not invent recipes, items, or mechanics."
+            )},
+            {"role": "user", "content": json.dumps({"difficulty": difficulty, "count": count, "facts": local_facts}, ensure_ascii=False)},
+        ],
+        max_tokens=min(3000, 350 + count * 220),
+        temperature=0.4,
+        response_format={"type": "json_object"},
+    )
+    content = response.choices[0].message.content or "{}"
+    try:
+        payload = json.loads(content)
+    except json.JSONDecodeError:
+        start = content.find("{")
+        payload = json.loads(content[start:]) if start >= 0 else {}
+    rows = payload.get("questions", []) if isinstance(payload, dict) else []
+    return [row for row in rows if isinstance(row, dict)][:count]
+
+
 
 async def analyze_image(image_url: str, hint: str = "", usage_context: Optional[Mapping[str, Optional[str]]] = None) -> Optional[str]:
     """Analyze a single image with fallback: primary → backup (key 2) → None if both fail."""
@@ -407,3 +439,4 @@ async def _prepare_image_items(image_url: str) -> List[Dict[str, Any]]:
     except Exception as error:
         print(f"[Vision] Animation sampling unavailable ({content_type}): {error}")
     return [{"type": "image_url", "image_url": {"url": image_url}}]
+
