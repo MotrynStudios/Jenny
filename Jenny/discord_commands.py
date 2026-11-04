@@ -502,26 +502,29 @@ async def make_pack_trivia(difficulty: str = "medium", rounds: int = 5):
     informative = [item for item in candidates if any(item.get(key) for key in ("description", "item", "recipe"))]
     facts = random.sample(informative or candidates, min(40, len(informative or candidates)))
     grounded_text = normalize(json.dumps(facts, ensure_ascii=False))
-    raw_rows = await generate_trivia_with_gemini(facts, new_count, difficulty)
     allowed = {item["name"].casefold(): item["name"] for item in candidates}
     generated, seen = [], set()
-    for row in raw_rows:
-        answer = allowed.get(str(row.get("answer", "")).strip().casefold())
-        clue = str(row.get("question", "")).strip()
-        evidence = str(row.get("evidence", "")).strip()
-        clue_key = normalize(clue)
-        if not answer or not clue or not evidence or len(clue) > 420 or not clue_key:
-            continue
-        evidence_key = normalize(evidence)
-        if len(evidence_key) < 5 or evidence_key not in grounded_text:
-            continue
-        if normalize(answer) in clue_key or clue_key in seen:
-            continue
-        seen.add(clue_key)
-        options = random.sample([name for name in allowed.values() if name != answer], 3) + [answer]
-        random.shuffle(options)
-        generated.append({"question": clue, "answer": answer, "options": options,
-                          "difficulty": difficulty, "id": None, "evidence": evidence})
+    attempts = 0
+    while len(generated) < new_count and attempts < 2:
+        raw_rows = await generate_trivia_with_gemini(facts, new_count - len(generated), difficulty)
+        attempts += 1
+        for row in raw_rows:
+            answer = allowed.get(str(row.get("answer", "")).strip().casefold())
+            clue = str(row.get("question", "")).strip()
+            evidence = str(row.get("evidence", "")).strip()
+            clue_key = normalize(clue)
+            if not answer or not clue or not evidence or len(clue) > 420 or not clue_key:
+                continue
+            evidence_key = normalize(evidence)
+            if len(evidence_key) < 5 or evidence_key not in grounded_text:
+                continue
+            if normalize(answer) in clue_key or clue_key in seen:
+                continue
+            seen.add(clue_key)
+            options = random.sample([name for name in allowed.values() if name != answer], 3) + [answer]
+            random.shuffle(options)
+            generated.append({"question": clue, "answer": answer, "options": options,
+                              "difficulty": difficulty, "id": None, "evidence": evidence})
     add_questions(generated)
     for row in generated:
         row["id"] = get_question_id(row["question"])
