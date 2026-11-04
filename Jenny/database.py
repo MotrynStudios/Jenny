@@ -197,6 +197,18 @@ def init_database() -> None:
         )
     """)
 
+    # Short-lived dated summaries preserve conversational continuity for a
+    # week. Stable facts continue to live in the compact scoped_user_memory.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS daily_user_memory (
+            user_id TEXT NOT NULL,
+            summary_date TEXT NOT NULL,
+            summary TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, summary_date)
+        )
+    """)
+
     # Older releases copied the same summary into both a shared and a guild/DM
     # scope. Drop only byte-for-byte duplicate local rows; distinct legacy
     # context remains readable until a human-memory update consolidates it.
@@ -604,6 +616,47 @@ def set_scoped_user_summary(scope_id: str, user_id: str, summary: str) -> None:
     conn.close()
 
 
+def get_recent_user_daily_summaries(user_id: str, days: int = 7) -> Dict[str, str]:
+    """Return only dated conversation summaries from the last week."""
+    days = max(1, min(int(days), 30))
+    cutoff = (datetime.now(timezone.utc).date() - timedelta(days=days - 1)).isoformat()
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT summary_date, summary FROM daily_user_memory WHERE user_id = ? AND summary_date >= ? ORDER BY summary_date DESC",
+        (str(user_id), cutoff),
+    ).fetchall()
+    conn.close()
+    return {str(row["summary_date"]): str(row["summary"] or "") for row in rows if row["summary"]}
+
+
+def set_user_daily_summary(user_id: str, summary_date: str, summary: str) -> None:
+    """Upsert one date's compact conversational context for this user."""
+    day = datetime.strptime(str(summary_date), "%Y-%m-%d").date().isoformat()
+    value = str(summary or "").strip()[:600]
+    if not value:
+        return
+    conn = get_connection()
+    conn.execute(
+        """INSERT INTO daily_user_memory(user_id, summary_date, summary, updated_at) VALUES (?, ?, ?, ?)
+           ON CONFLICT(user_id, summary_date) DO UPDATE SET summary=excluded.summary, updated_at=excluded.updated_at""",
+        (str(user_id), day, value, datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def cleanup_expired_user_daily_summaries(days: int = 7) -> int:
+    """Drop dated summaries once their week-long context window has passed."""
+    days = max(1, min(int(days), 30))
+    cutoff = (datetime.now(timezone.utc).date() - timedelta(days=days - 1)).isoformat()
+    conn = get_connection()
+    cursor = conn.execute("DELETE FROM daily_user_memory WHERE summary_date < ?", (cutoff,))
+    deleted = max(0, cursor.rowcount)
+    conn.commit()
+    conn.close()
+    return deleted
+
+
 def get_combined_user_summary(user_id: str, scope_id: Optional[str] = None) -> str:
     """Read shared cross-context memory plus the current scope's legacy memory.
 
@@ -657,6 +710,7 @@ def clear_user_conversations(user_id: str, guild_id: Optional[str] = None,
     elif guild_id is None:
         conn.execute("DELETE FROM conversation_history WHERE user_id = ?", (str(user_id),))
         conn.execute("DELETE FROM scoped_user_memory WHERE user_id = ?", (str(user_id),))
+        conn.execute("DELETE FROM daily_user_memory WHERE user_id = ?", (str(user_id),))
         conn.execute("DELETE FROM users WHERE user_id = ?", (str(user_id),))
     else:
         guild_scope = f"guild:{guild_id}"
@@ -899,6 +953,9 @@ def cleanup_expired_records(retention_days: int = 90) -> Dict[str, int]:
     deleted["image_context_cache"] = max(0, conn.execute("SELECT changes()").fetchone()[0])
     conn.execute("DELETE FROM voice_sessions WHERE joined_at < ? AND left_at IS NOT NULL", (cutoff,))
     deleted["voice_sessions"] = max(0, conn.execute("SELECT changes()").fetchone()[0])
+    daily_cutoff = (datetime.now(timezone.utc).date() - timedelta(days=6)).isoformat()
+    conn.execute("DELETE FROM daily_user_memory WHERE summary_date < ?", (daily_cutoff,))
+    deleted["daily_user_memory"] = max(0, conn.execute("SELECT changes()").fetchone()[0])
     conn.commit()
     conn.close()
 
@@ -2100,3 +2157,4 @@ def get_latest_changelog() -> Optional[Dict[str, Any]]:
             "type": row["type"]
         }
     return None
+
