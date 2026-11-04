@@ -5,6 +5,7 @@ Automatically summarizes conversations and updates long-term memory
 
 import json
 from json import JSONDecodeError
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Callable, Dict
 from database import (
     get_channel_memory, set_channel_memory, get_memory_maintenance_info,
@@ -12,7 +13,8 @@ from database import (
     get_messages_for_maintenance, get_voice_messages_for_maintenance,
     log_message,
     get_dm_text_for_maintenance, get_dm_voice_for_maintenance,
-    set_scoped_user_summary, get_combined_user_summary
+    set_scoped_user_summary, get_combined_user_summary,
+    get_recent_user_daily_summaries, set_user_daily_summary
 )
 from prompt_builder import build_memory_prompt
 from ai import generate_memory_maintenance as ai_generate
@@ -99,10 +101,31 @@ async def run_memory_maintenance_for_stream(channel_id: str, stream_type: str = 
                 unique_users.add(dm_user_id)
         allowed_user_ids = sorted(unique_users)
 
+        # Dated summaries preserve short-term context for a week. Only dates
+        # represented in this batch may be updated by the model.
+        today = datetime.now(timezone.utc).date()
+        cutoff_day = today - timedelta(days=6)
+        allowed_summary_dates: Dict[str, list[str]] = {user_id: [] for user_id in allowed_user_ids}
+        for msg in messages:
+            user_id = str(msg.get("user_id") or "")
+            raw_timestamp = str(msg.get("timestamp") or "")
+            if user_id not in allowed_summary_dates:
+                continue
+            try:
+                day = datetime.fromisoformat(raw_timestamp.replace("Z", "+00:00")).date()
+            except ValueError:
+                day = today
+            if cutoff_day <= day <= today:
+                allowed_summary_dates[user_id].append(day.isoformat())
+        for user_id in allowed_summary_dates:
+            allowed_summary_dates[user_id] = sorted(set(allowed_summary_dates[user_id]))
+
         # Get current user memories
         current_user_memories: Dict[str, str] = {}
+        current_daily_user_summaries: Dict[str, Dict[str, str]] = {}
         for user_id in unique_users:
             current_user_memories[user_id] = get_combined_user_summary(user_id, memory_scope)
+            current_daily_user_summaries[user_id] = get_recent_user_daily_summaries(user_id, 7)
 
         # Build the memory maintenance prompt
         memory_prompt = build_memory_prompt(
@@ -112,6 +135,8 @@ async def run_memory_maintenance_for_stream(channel_id: str, stream_type: str = 
             channel_id=channel_id,
             stream_type=stream_type,
             allowed_user_ids=allowed_user_ids,
+            current_daily_user_summaries=current_daily_user_summaries,
+            allowed_summary_dates=allowed_summary_dates,
         )
 
         # Call AI to perform memory maintenance
@@ -143,6 +168,8 @@ async def run_memory_maintenance_for_stream(channel_id: str, stream_type: str = 
                 channel_id=channel_id,
                 stream_type=stream_type,
                 allowed_user_ids=allowed_user_ids,
+                current_daily_user_summaries=current_daily_user_summaries,
+                allowed_summary_dates=allowed_summary_dates,
             )
             print(f"[Memory] Retrying malformed {stream_type} summary with 10 records")
             ai_response = await generate_func(retry_prompt, max_tokens=700)
@@ -161,6 +188,17 @@ async def run_memory_maintenance_for_stream(channel_id: str, stream_type: str = 
             for user_id, value in raw_user_updates.items()
             if str(user_id) in allowed_user_ids and isinstance(value, str) and value.strip()
         }
+        raw_daily_updates = memory_update.get("daily_summaries", {})
+        if isinstance(raw_daily_updates, dict):
+            for user_id, summaries in raw_daily_updates.items():
+                user_id = str(user_id)
+                if user_id not in allowed_summary_dates or not isinstance(summaries, dict):
+                    continue
+                for day, summary in summaries.items():
+                    day = str(day)
+                    if (day in allowed_summary_dates[user_id] and isinstance(summary, str)
+                            and summary.strip()):
+                        set_user_daily_summary(user_id, day, summary)
         channel_summary_value = memory_update.get("channel_summary")
         if not stream_type.startswith("dm_") and not isinstance(channel_summary_value, str):
             retry_after = defer_memory_maintenance(channel_id, stream_type)
@@ -212,6 +250,7 @@ async def run_memory_maintenance_for_channel(channel_id: str, generate_func: Opt
     voice_done = await run_memory_maintenance_for_stream(channel_id, "voice", generate_func, memory_scope)
 
     return text_done or voice_done
+
 
 
 
