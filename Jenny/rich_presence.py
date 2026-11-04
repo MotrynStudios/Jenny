@@ -2,7 +2,7 @@
 
 Discord bot accounts do not have the same full Rich Presence capabilities as
 desktop game integrations. This module uses the supported Playing activity and
-updates its title once a minute to show an elapsed session time. The clock is
+updates its elapsed session time every 15 seconds. The clock is
 intentionally process-local, so it resets after a restart.
 """
 
@@ -43,11 +43,9 @@ async def run_minecraft_presence(bot: "Bot") -> None:
         )
         try:
             await bot.change_presence(activity=activity)
-            print(f"[PRESENCE] Playing Minecraft | Singleplayer · Version 26.3 · {elapsed_text}")
-        except (discord.HTTPException, discord.DiscordException) as error:
+        except (discord.HTTPException, discord.DiscordException):
             # Presence is cosmetic; a transient gateway/API failure should not
-            # take down message handling or the rest of the bot.
-            print(f"[PRESENCE] Could not update game activity: {error}")
+            # take down message handling or add noise to the runtime log.
+            pass
 
         await asyncio.sleep(PRESENCE_UPDATE_INTERVAL_SECONDS)
-

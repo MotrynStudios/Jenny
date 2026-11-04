@@ -10,7 +10,7 @@ body:
     id: version
     attributes:
       label: Jenny version or commit
-      placeholder: 0.85 or commit SHA
+      placeholder: Release number or commit SHA
     validations:
       required: true
   - type: input
@@ -32,3 +32,8 @@ body:
     attributes:
       label: Sanitized error excerpt
       description: Remove tokens, keys, message contents, and server identifiers.
+  - type: input
+    id: modpack
+    attributes:
+      label: Minecraft version, mod loader, and mod version
+      description: Fill this in for extraction, recipe, or pack search bugs.

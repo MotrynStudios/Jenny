@@ -1,10 +1,14 @@
 # Getting help
 
-The maintainer is Mohamed Ayman Elnashar. For hiring, questions, suggestions, or collaboration, contact `theinevitableinvincible` on Discord.
+Jenny is still in development. Reports about bugs, incomplete mod extraction, setup problems, and suggestions are welcome.
 
-For setup questions and reproducible bugs, open the matching GitHub issue template. Include your operating system, Python and Node versions, the command you ran, and a short sanitized error excerpt.
+- [Open a GitHub issue](https://github.com/MotrynStudios/Jenny/issues/new/choose) for a reproducible problem or feature request.
+- Use `/report` in a server where the owner has enabled GitHub issue submission. The form posts the details you enter to the configured public tracker.
+- Contact **theinevitableinvincible** on Discord for questions, suggestions, collaboration, or hiring.
+- Email [motrynstudios@gmail.com](mailto:motrynstudios@gmail.com) if you prefer to report a bug or get help by email.
 
-Never include `.env` contents, bot tokens, API keys, full private conversations, unredacted voice logs, or private modpack configs. For security issues, follow [SECURITY.md](SECURITY.md) instead of opening a public issue.
+Include the Jenny version or commit, your operating system, Python and Node versions, what you ran, what you expected, and a short sanitized error excerpt. For mod extraction, include the Minecraft version, loader, mod name and version, and an example of what is missing. A small excerpt or public link to the mod is usually enough.
 
-For Minecraft data questions, include the relevant mod or config filename and a small excerpt that is safe to share. See [the RAG setup guide](tools/rag/README.md) for expected folder layout, supported formats, the three build stages, and empty-index troubleshooting. When diagnosing a missing index, share the final status lines from `logs/extraction.log`, `logs/processing.log`, and `logs/jenny_rag.log` after removing private paths or pack contents.
+For an empty RAG index, check the [build guide](tools/rag/README.md) and share the last relevant lines from `logs/extraction.log`, `logs/processing.log`, and `logs/jenny_rag.log`. For voice issues, share the part of `logs/voice-runtime.log` from the failed turn or join. Remove credentials, user IDs, private chats, transcripts, and private pack files.
 
+Use the [private vulnerability report](https://github.com/MotrynStudios/Jenny/security/advisories/new) for security issues. See [SECURITY.md](SECURITY.md).

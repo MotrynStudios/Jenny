@@ -15,6 +15,7 @@ __pycache__/
 # Runtime data, logs, and generated indexes
 Jenny/memory.db*
 Jenny/modpack_context.txt
+Jenny/assets/minecraft_grass_block.png
 logs/
 /data/*
 !/data/.gitkeep

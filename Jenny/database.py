@@ -1,6 +1,7 @@
 import sqlite3
 import json
 import threading
+from contextlib import closing
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
@@ -984,15 +985,16 @@ def save_image_context(message_id: str, guild_id: Optional[str], user_id: str,
 
 
 def get_latest_image_context(guild_id: Optional[str], user_id: str,
-                             max_age_hours: int = 24) -> Optional[Dict[str, Any]]:
+                             max_age_hours: int = 24, channel_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=max_age_hours)).isoformat()
     conn = get_connection()
     row = conn.execute("""
         SELECT message_id, guild_id, user_id, channel_id, image_url, description, created_at
         FROM image_context_cache
         WHERE guild_id IS ? AND user_id = ? AND created_at >= ?
+          AND (? IS NULL OR channel_id = ?)
         ORDER BY created_at DESC LIMIT 1
-    """, (str(guild_id) if guild_id else None, str(user_id), cutoff)).fetchone()
+    """, (str(guild_id) if guild_id else None, str(user_id), cutoff, channel_id, channel_id)).fetchone()
     conn.close()
     return dict(row) if row else None
 
@@ -1050,6 +1052,19 @@ def update_last_message_timestamp(user_id: str) -> None:
 
 
 # Global log functions
+def get_recent_discord_results(channel_id: str, guild_id: Optional[str], limit: int = 6) -> str:
+    """Read recent visible command activity within the exact Discord channel."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    with closing(get_connection()) as conn:
+        rows = conn.execute("""
+            SELECT content FROM global_log
+            WHERE channel_id = ? AND guild_id IS ? AND timestamp >= ? AND author = 'Jenny (System)'
+              AND (content LIKE '[Command] %' OR content LIKE '[Result] %')
+            ORDER BY id DESC LIMIT ?
+        """, (str(channel_id), str(guild_id) if guild_id else None, cutoff, limit)).fetchall()
+    return "\n".join(row["content"][:480] for row in reversed(rows))[-2400:]
+
+
 def log_message(author: str, content: str, user_id: Optional[str] = None,
                 channel_id: Optional[str] = None, guild_id: Optional[str] = None) -> Optional[int]:
     """Log a message to the global log"""
@@ -1326,8 +1341,9 @@ def get_recent_voice_chat(hours: int = 1, max_entries: int = 50,
         SELECT timestamp, user_id, username, transcript, response, guild_id, channel_id, timings_json, speech_duration_ms
         FROM voice_chat
         WHERE timestamp > ? AND guild_id IS ? AND channel_id = ?
+          AND (? IS NULL OR user_id = ?)
         ORDER BY timestamp DESC LIMIT ?
-        """, (cutoff, str(guild_id) if guild_id else None, str(channel_id), max_entries))
+        """, (cutoff, str(guild_id) if guild_id else None, str(channel_id), user_id, user_id, max_entries))
     elif guild_id is None and user_id is None:
         cursor.execute("""
         SELECT timestamp, user_id, username, transcript, response, guild_id, channel_id, timings_json, speech_duration_ms
@@ -1369,15 +1385,18 @@ def get_recent_voice_chat(hours: int = 1, max_entries: int = 50,
 
 
 def get_recent_user_messages(guild_id: Optional[str], user_id: str,
-                             hours: int = 24, limit: int = 10) -> List[Dict[str, str]]:
+                             hours: int = 24, limit: int = 10,
+                             channel_id: Optional[str] = None) -> List[Dict[str, str]]:
     """Fetch a user's own recent messages for cross-channel and cross-modal context."""
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
     conn = get_connection()
     rows = conn.execute("""
         SELECT timestamp, author, content, channel_id FROM global_log
         WHERE guild_id IS ? AND user_id = ? AND timestamp >= ?
+          AND (? IS NULL OR channel_id = ?)
         ORDER BY id DESC LIMIT ?
-    """, (str(guild_id) if guild_id else None, str(user_id), cutoff, max(1, min(limit, 30)))).fetchall()
+    """, (str(guild_id) if guild_id else None, str(user_id), cutoff, channel_id, channel_id,
+          max(1, min(limit, 30)))).fetchall()
     conn.close()
     return [dict(row) for row in reversed(rows)]
 
@@ -1967,7 +1986,7 @@ def save_command_output(user_id: str, guild_id: Optional[str], channel_id: str,
 
 
 def get_latest_command_output(user_id: str, conversation_id: str,
-                              max_age_hours: int = 24) -> Optional[Dict[str, Any]]:
+                              max_age_hours: int = 24, message_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Fetch the user's latest still-relevant structured command output."""
     now = datetime.now(timezone.utc)
     cutoff = (now - timedelta(hours=max_age_hours)).isoformat()
@@ -1975,8 +1994,9 @@ def get_latest_command_output(user_id: str, conversation_id: str,
     row = conn.execute(
         """SELECT * FROM command_output_cache
            WHERE user_id = ? AND conversation_id = ? AND expires_at > ? AND created_at > ?
+             AND (? IS NULL OR message_id = ?)
            ORDER BY created_at DESC, id DESC LIMIT 1""",
-        (str(user_id), conversation_id, now.isoformat(), cutoff),
+        (str(user_id), conversation_id, now.isoformat(), cutoff, message_id, message_id),
     ).fetchone()
     conn.close()
     if not row:
@@ -1998,16 +2018,28 @@ def set_command_output_page(record_id: int, page_index: int) -> None:
     conn.close()
 
 
+def claim_trivia_next(record_id: int, index: int) -> bool:
+    """A chat continuation and a button click can only open the next round once."""
+    with closing(get_connection()) as conn, conn:
+        cursor = conn.execute(
+            """UPDATE command_output_cache
+               SET payload_json = json_set(payload_json, '$.status', 'active')
+               WHERE id = ? AND kind = 'trivia' AND expires_at > ?
+                 AND json_extract(payload_json, '$.status') = 'awaiting_next'
+                 AND json_extract(payload_json, '$.index') = ?""",
+            (record_id, datetime.now(timezone.utc).isoformat(), index),
+        )
+        return cursor.rowcount == 1
+
+
 def update_command_output(record_id: int, payload: Dict[str, Any],
-                          title: Optional[str] = None) -> None:
+                          title: Optional[str] = None, message_id: Optional[str] = None) -> None:
     """Refresh a saved command result after a trivia round or page transition."""
     conn = get_connection()
-    if title is None:
-        conn.execute("UPDATE command_output_cache SET payload_json = ? WHERE id = ?",
-                     (json.dumps(payload, ensure_ascii=False), int(record_id)))
-    else:
-        conn.execute("UPDATE command_output_cache SET payload_json = ?, title = ? WHERE id = ?",
-                     (json.dumps(payload, ensure_ascii=False), title, int(record_id)))
+    conn.execute("""UPDATE command_output_cache
+                    SET payload_json = ?, title = COALESCE(?, title), message_id = COALESCE(?, message_id)
+                    WHERE id = ?""",
+                 (json.dumps(payload, ensure_ascii=False), title, message_id, int(record_id)))
     conn.commit()
     conn.close()
 
@@ -2106,17 +2138,17 @@ def initialize_changelog() -> None:
     """Ensure the current public release entry exists without deleting history."""
     try:
         add_changelog_entry(
-            version="0.93",
-            description="Fixed public trivia, chat actions, and custom recipe retrieval",
+            version="0.94f",
+            description="Faster exact recipe lookups, improved voice feedback, and Discord issue reporting",
             features=[
-                "Public timed solo and party trivia with model routing for chat requests",
+                "Opt-in /report form, mod content browser, recipe autocomplete, and typed trivia banks",
             ],
             changes=[
-                "Fixed role arguments, DM token usage, and custom workbench recipe indexing",
+                "Fixed cold exact recipe lookups, recipe web search, duplicate replies, and stuck voice joins",
             ],
             entry_type="release",
         )
-        print("[Changelog] Current release entry ensured at version 0.93")
+        print("[Changelog] Current release entry ensured at version 0.94f")
     except Exception as error:
         print(f"[Changelog] Error initializing changelog: {error}")
 
@@ -2145,4 +2177,3 @@ def get_latest_changelog() -> Optional[Dict[str, Any]]:
             "type": row["type"]
         }
     return None
-

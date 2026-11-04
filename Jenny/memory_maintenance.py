@@ -229,29 +229,3 @@ async def run_memory_maintenance_for_stream(channel_id: str, stream_type: str = 
         print(f"[Memory] Retry deferred until {retry_after.isoformat()}")
         log_message("Jenny (System)", f"Error during memory maintenance for {stream_type} stream in {channel_id}: {e}", None, channel_id)
         return False
-
-
-async def run_memory_maintenance_for_channel(channel_id: str, generate_func: Optional[Callable] = None,
-                                             memory_scope: Optional[str] = None) -> bool:
-    """
-    Run memory maintenance for both text and voice streams in a channel
-
-    Args:
-        channel_id: The channel ID to perform maintenance for
-        generate_func: The AI generation function to use (uses ai.generate if not provided)
-
-    Returns:
-        True if any maintenance was performed, False otherwise
-    """
-    # Run maintenance for text stream
-    text_done = await run_memory_maintenance_for_stream(channel_id, "text", generate_func, memory_scope)
-
-    # Run maintenance for voice stream (using guild_id)
-    voice_done = await run_memory_maintenance_for_stream(channel_id, "voice", generate_func, memory_scope)
-
-    return text_done or voice_done
-
-
-
-
-

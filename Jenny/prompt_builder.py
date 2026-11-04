@@ -20,7 +20,7 @@ def build_text_prompt(
     Build prompt for text Discord interactions.
     Memory sections have token limits:
     - Channel summary + user memory: 1500 tokens
-    - Recent messages: 1000 tokens
+    - The caller supplies recent messages after assembling this base prompt.
     Other sections (prompt, current message, reply context, image context) are unrestricted.
     
     Args:
@@ -94,7 +94,7 @@ def build_voice_prompt(
     Build prompt for voice interactions.
     Memory sections have token limits:
     - Channel summary + user memory: 1500 tokens
-    - Recent messages: 1000 tokens
+    - Recent messages: up to 2000 estimated tokens
     Other sections (prompt, transcript, voice context) are unrestricted.
     
     Args:
@@ -143,7 +143,7 @@ def build_voice_prompt(
     # Add recent conversation messages with 1000-token limit
     if recent_messages:
         recent_context: str = "Recent conversation:\n"
-        for msg in limit_history_by_tokens(recent_messages, 1000):
+        for msg in limit_history_by_tokens(recent_messages, 2000):
             recent_context += f"{msg.get('role', 'unknown')}: {msg.get('content', '')}\n"
         messages.append({"role": "system", "content": recent_context})
     
@@ -328,4 +328,3 @@ def limit_history_by_tokens(history: List[Dict[str, str]], max_tokens: int) -> L
         selected.append({"role": entry.get("role", "user"), "content": content})
         used_tokens += cost
     return list(reversed(selected))
-

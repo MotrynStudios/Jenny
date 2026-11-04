@@ -4,13 +4,11 @@
   "description": "Optional Discord voice service with Groq transcription and Deepgram speech output",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "node index.js"
+    "start": "node index.js"
   },
   "dependencies": {
     "@discordjs/voice": "^0.19.2",
     "axios": "^1.7.0",
-    "debug": "^4.4.3",
     "discord.js": "^14.16.0",
     "dotenv": "^16.4.0",
     "form-data": "^4.0.0",
@@ -22,4 +20,3 @@
     "node": ">=22.12.0"
   }
 }
-

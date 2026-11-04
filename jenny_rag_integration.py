@@ -151,7 +151,16 @@ class JennyRAGSystem:
         except (ImportError, ValueError, RuntimeError) as error:
             logger.warning("Could not apply RAG CPU thread limit: %s", error)
         logger.info("Initializing embedding model...")
-        self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+        model_id = "sentence-transformers/all-MiniLM-L6-v2"
+        try:
+            self.embedding_model = SentenceTransformer(model_id, local_files_only=True)
+        except OSError:
+            logger.info("No complete cached embedding model; downloading it from Hugging Face")
+            self.embedding_model = SentenceTransformer(model_id)
+        except TypeError as error:
+            if "unexpected keyword argument 'local_files_only'" not in str(error):
+                raise
+            self.embedding_model = SentenceTransformer(model_id)
         logger.info("Embedding model initialized")
 
     def initialize_vector_database(self):
@@ -497,6 +506,12 @@ class JennyRAGSystem:
 _jenny_rag_instance = None
 _jenny_rag_lock = threading.RLock()
 _rag_operation_lock = threading.RLock()
+
+
+def is_rag_warm() -> bool:
+    """Check whether retrieval components are in memory without initializing them."""
+    instance = _jenny_rag_instance
+    return bool(instance and instance.embedding_model is not None and instance.collection is not None)
 
 def get_jenny_rag() -> JennyRAGSystem:
     """Get or create the global Jenny RAG instance"""

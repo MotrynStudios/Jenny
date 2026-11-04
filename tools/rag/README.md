@@ -38,7 +38,11 @@ For a launcher or server instance elsewhere, pass its actual directories to the 
 
 Extraction is format-driven, not a universal mod API. Minecraft versions change folder names and schemas; the extractor handles singular and plural recipe/advancement folders but does not validate game-version or loader constraints. Forge/NeoForge, Fabric, Quilt, and legacy Forge metadata are recognized. Common text configs are indexed as text with best-effort credential redaction. Custom binary databases, generated runtime recipes, and proprietary mod-specific encodings are not interpreted automatically. Add a focused parser when a mod's content does not use the covered JSON or text layouts.
 
-The Timeless & Classics Guns (TaCZ) core JAR stores gun data in a custom gunpack under `assets/tacz/custom/<pack>/data/tacz/data/`. Jenny extracts its JSONC stat records and indexes the numeric values. Similar structured JSON in supported custom data folders is also indexed, although each mod can use its own schema. The `/searchpack` command searches every processed document and paginates all exact text matches. `/recipe` scans each extracted standard recipe file, including either a recipe list, a single recipe object, or an object with a `recipes` list, and searches both outputs and ingredients. Custom workbench recipe files under `assets/*/custom/*/data/*/recipe(s)/` are indexed as separate evidence for chat answers. Rebuild the index to include them. The crafting-grid slash command still formats standard recipe layouts; custom recipes are available through `/searchpack` and Jenny's grounded chat retrieval.
+The Timeless & Classics Guns (TaCZ) core JAR stores gun data in a custom gunpack under `assets/tacz/custom/<pack>/data/tacz/data/`. Jenny extracts its JSONC stat records and indexes the numeric values. Other mods may use different schemas. `/searchpack` searches processed documents, and `/recipe` browses known outputs and ingredients from standard and supported custom files. Workbench recipes under `assets/*/custom/*/data/*/recipe(s)/` are also indexed for chat retrieval. Rebuild after adding or updating mods.
+
+RAG has been tested with **Minecraft 1.21.1 NeoForge mods**. Other mods, loaders and versions may work, but coverage is incomplete and extraction can miss or misread some data. If your mod is missing or its data is wrong, follow the [reporting guide](../../SUPPORT.md).
+
+The recipe browser also reads extracted custom workbench records. TaCZ cards show the Gun Smith Table and material counts. A grid is displayed only when the source supplies a pattern and key. Ingredient searches include tag membership where the extracted files describe it.
 
 One bot installation has one shared index for every Discord server it serves. Different pack corpora currently need separate installations; per-server index selection is not implemented.
 
@@ -52,7 +56,15 @@ Run the combined builder from the repository root so extraction, document proces
 .\.venv\Scripts\python.exe tools\rag\build_index.py --mods-dir .\mods --config-dir .\config
 ```
 
-On macOS or Linux, use `./.venv/bin/python tools/rag/build_index.py --mods-dir ./mods --config-dir ./config`. Running `extract_modpack_data.py` alone only creates `data/raw_data/`; it does not create the processed corpus or embeddings. `process_for_rag.py` alone creates `all_documents.json` but does not populate ChromaDB.
+On macOS or Linux, use `./.venv/bin/python tools/rag/build_index.py --mods-dir ./mods --config-dir ./config`. Running `extract_modpack_data.py` alone creates the raw data, manifest, and trivia bank. `process_for_rag.py` alone creates `all_documents.json`.
+
+## Prebuild the trivia bank
+
+Extraction requests up to 100 questions each for descriptions, recipes, and items/blocks. The target is divided across easy, medium, and hard. It sends small batches of mod descriptions, localized item names, and supported recipe ingredients to the last configured provider in the default text route first. It tries the other configured text providers when needed. Configuration files are not part of trivia generation.
+
+Questions live in `data/trivia_cache.sqlite3`. A source key ties each question to a fact in the current extraction. Rebuilding reuses matching questions and fills missing slots. Older uncategorized questions are left in the database for solve history. Shortfalls are printed per category when facts or provider quota run out.
+
+Use `build_index.py --trivia-only` to fill the question bank from existing extracted files, or `build_index.py --skip-trivia` to build the search index without sending model requests. Recipes in trivia use supported crafting, cooking, and stonecutting layouts with readable item names.
 
 ## Build resource use
 
@@ -70,4 +82,3 @@ Check the stages in order:
 If indexing fails while adding a batch, inspect the first Chroma metadata validation error in `logs/jenny_rag.log`. Mod language data can contain nested arrays or objects. The indexer converts those values to JSON strings before sending them to Chroma. After updating the code, rerun the combined builder so it can rebuild the collection from the processed JSON.
 
 The `mods/`, `config/`, generated `data/`, local SQLite memory, and runtime logs are ignored by Git. They belong to each installation and should not be committed unless you intentionally publish that pack's data. The runtime adapter and voice HTTP bridge live at the repository root because the Discord application imports and runs them; this folder is for offline RAG build tools only.
-

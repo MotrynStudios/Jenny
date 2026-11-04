@@ -1,157 +1,219 @@
-# Jenny
+# Jenny AI Discord Bot
 
-Jenny is an open-source, multi-server Discord companion for relaxed chat, voice conversations, and grounded Minecraft modpack/config help.
+Jenny is a self-hosted Discord AI bot with memory, voice chat, image understanding, and a Minecraft modpack library. She can keep up with a conversation, look up a recipe in your pack, or run a Discord command when you ask in plain English.
 
-Jenny is a multi-server Discord bot with persistent chat context, searchable server history, Minecraft mod and config retrieval, image/GIF analysis, and an optional voice companion service. Guild settings, profiles, usage totals, and channel memories stay scoped to their server. A person's long-term memory follows their stable Discord user ID across DMs, server text, and voice, while short conversation histories remain separate by conversation.
+You only need to know how to copy API keys, create a Discord bot, and run a few terminal commands. Start with text chat and add voice, web search, or Minecraft data when you want them.
 
-Jenny uses the Jenny Belle character profile in `Jenny/Prompts.py`: a 19-year-old freelancer from Long Beach, Los Angeles, who has played Minecraft since 2018. She likes relaxed chats, creative projects, cats, and clever jokes; she dislikes bullying, needless drama, and confident guessing. Her prompt avoids unprompted AI disclaimers and keeps a playful, occasionally sharp tone; if someone directly asks whether she is human, it answers honestly. Server text and voice prompts include the current speaker's and Jenny's live server roles; DM prompts do not have server roles.
+**Jenny is a young project and is still in development.** The RAG system has been tested with **Minecraft 1.21.1 NeoForge mods**. Other mods, mod loaders and Minecraft versions may work, but they have not all been tested. Some data may be missing or extracted incorrectly. If you find a problem, please [report it](SUPPORT.md).
 
-## License and attribution
+## Contents
 
-This project is released under the [MIT License](LICENSE), copyright Mohamed Ayman Elnashar. You may use, modify, and redistribute it, including in commercial projects. Keep the copyright and license notices with copies or substantial portions of the software. The MIT License does not require a separate product, advertising, or marketing credit.
+- [What Jenny can do](#what-jenny-can-do)
+- [Quick start](#quick-start)
+- [Create and invite your Discord bot](#create-and-invite-your-discord-bot)
+  - [Privileged intents](#privileged-intents)
+  - [Installation and permissions](#installation-and-permissions)
+- [API keys and free usage](#api-keys-and-free-usage)
+- [Configure the environment file](#configure-the-environment-file)
+- [Optional voice service](#optional-voice-service)
+- [Minecraft modpack data](#minecraft-modpack-data)
+- [Commands](#commands)
+- [Memory and data](#memory-and-data)
+- [Resource use](#resource-use)
+- [FAQ](#faq)
+  - [Do I need all the API keys?](#do-i-need-all-the-api-keys)
+  - [Jenny is online, but why doesn't she answer?](#jenny-is-online-but-why-doesnt-she-answer)
+  - [Why isn't voice working?](#why-isnt-voice-working)
+  - [Why isn't my mod or recipe showing?](#why-isnt-my-mod-or-recipe-showing)
+  - [Why does a provider return 429?](#why-does-a-provider-return-429)
+  - [Can I change her personality?](#can-i-change-her-personality)
+- [Roadmap](#roadmap)
+- [Project files and development](#project-files-and-development)
+- [Support and license](#support-and-license)
 
-## Contact
+## What Jenny can do
 
-Maintainer: Mohamed Ayman Elnashar  
-Discord: `theinevitableinvincible`
+- Chat in servers and DMs, answer replies to her messages, and use recent context and saved summaries.
+- Understand images and sampled frames from supported GIFs, transcribe voice notes, and talk in a server voice channel with the optional voice service.
+- Browse your installed mods, search recipe outputs or ingredients, show grids for shaped recipes, and display materials for supported workbench recipes.
+- Host timed solo or multiplayer Minecraft trivia, with separate question categories and a server leaderboard.
+- Run the same Discord commands from natural language, show usage and profiles, and manage roles when both the requester and Jenny have the required permissions.
 
-Open to hiring, questions, suggestions, and collaboration. Please use GitHub Issues for bug reports and feature requests, and follow [SECURITY.md](SECURITY.md) for security reports.
+## Quick start
 
-The bot grounds Minecraft claims in the local mod/config corpus configured for that Jenny installation. At present, one installation has one shared RAG index for every Discord server it serves. If different servers use different modpacks, run separate bot installations or keep that limitation in mind; per-guild indexes are not implemented yet. When local evidence is missing, Jenny can use web search for background and labels it as external rather than treating it as proof of the installed pack. This reduces unsupported claims; no language model can guarantee zero hallucinations, so review high impact answers and tune retrieval against your own files.
+1. Install [Python 3.12](https://www.python.org/downloads/) and [Git](https://git-scm.com/downloads). [Node.js](https://nodejs.org/en/download) 22.12 or newer and [FFmpeg](https://ffmpeg.org/download.html) are for the optional voice service.
+2. Clone [Jenny on GitHub](https://github.com/MotrynStudios/Jenny) or download the ZIP and open a terminal in the project folder.
+3. [Create a Discord bot](#create-and-invite-your-discord-bot) and get one [text model API key](#api-keys-and-free-usage).
+4. Create a virtual environment, install the dependencies, and copy `.env.example` to `.env`.
 
-## Requirements
+Windows PowerShell:
 
-- Windows, macOS, or Linux
-- Python 3.10 or newer
-- Node.js 22.12 or newer for voice features (`@discordjs/voice` requirement)
-- FFmpeg available on `PATH` for voice playback
-- One Discord application and bot token, shared by the Python and optional Node.js processes
-- OpenRouter, Groq, Gemini, Tavily, and Deepgram API keys as configured in `.env.example`
+~~~powershell
+git clone https://github.com/MotrynStudios/Jenny.git
+cd Jenny
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+Copy-Item .env.example .env
+~~~
 
-## Install
+On macOS or Linux, use `python3.12 -m venv .venv`, `./.venv/bin/python -m pip install -r requirements.txt`, and `cp .env.example .env`. Skip the clone step if you already downloaded the project.
 
-1. Clone/download this repository and open a terminal in its folder.
-2. Create and activate a Python virtual environment, then install dependencies:
+Open `.env` in a text editor. For basic chat, fill in `DISCORD_TOKEN` and, for example, `GROQ_API_KEY`. Leave the other keys blank. Then start Jenny:
 
-   ```powershell
-   py -3.10 -m venv .venv
-   .\.venv\Scripts\Activate.ps1
-   pip install -r requirements.txt
-   ```
+~~~powershell
+.\.venv\Scripts\python.exe Jenny\Jenny-Bot.py
+~~~
 
-   On macOS/Linux, use `python3 -m venv .venv` and `source .venv/bin/activate`.
+On macOS or Linux use `./.venv/bin/python Jenny/Jenny-Bot.py`. On Windows you can also run `.\start.bat`. Once Jenny is online, run `/health` in Discord and say “Hey Jenny.” Use `/setmainchannel` in the channel you want her to use for saved chat searches and voice command results. Use `/setlogschannel` if you want a separate channel for interaction and profile logs.
 
-3. Copy `.env.example` to `.env` and add the single bot token and provider keys. Do not commit `.env`.
-4. In the Discord Developer Portal, enable **Message Content Intent** and **Server Members Intent** for the bot. Invite it with the `bot` and `applications.commands` scopes and permissions to view/send messages, read message history, embed links, attach files, and manage roles if you plan to use role assignment. Only grant Manage Roles if needed; Discord's role hierarchy still limits assignments.
-5. Start the text bot:
+## Create and invite your Discord bot
 
-   ```powershell
-   .\.venv\Scripts\python.exe Jenny\Jenny-Bot.py
-   ```
+1. Open the [Discord Developer Portal](https://discord.com/developers/applications), choose **New Application**, and name it. Under **Bot**, use **Reset Token** to generate or replace the bot token. Put it in `DISCORD_TOKEN`. The application ID, public key, and client secret do not go in that field.
+2. Set the intents below on the **Bot** page and save your changes.
+3. Under **Installation**, enable **Guild Install**, choose **Discord Provided Link**, and configure the install scopes and bot permissions below. Copy the install link, open it, select your server, and authorize. Your account needs permission to manage the server. See the [Discord quick start](https://docs.discord.com/developers/quick-start/getting-started).
+4. In Discord, check the bot role and the channel's permission overrides. A private channel may require a separate permission grant. For your own servers only, you can turn off **Public Bot** so other users cannot install it. Leave **Requires OAuth2 Code Grant** off for this setup. No redirect URL or interactions endpoint is needed because Jenny connects to the Discord gateway.
 
-   Or run `start.bat` on Windows after Python is available on `PATH`.
+### Privileged intents
 
-## Voice service (optional)
+| Bot setting | Value | What it does |
+| --- | --- | --- |
+| Message Content Intent | On | Lets Python read ordinary message text and attachments, including messages that say “Jenny” without an account mention. |
+| Server Members Intent | On | Lets Jenny track members, names, roles, and profile changes and resolve users for commands. |
+| Presence Intent | Off | Jenny publishes her own activity but does not subscribe to everyone else's presence. |
 
-Voice runs in a separate Node.js process, but uses the same Discord application, bot token, and root `.env` as Python. It is optional: text, DMs, slash commands, and RAG run without Node. Enable voice connection permissions for the existing bot. The Python bot's local API listens on `127.0.0.1:8000` by default; keep it local unless you add authentication and TLS.
+Apps that Discord has verified may need approval to use privileged intents. See [Discord's gateway intent rules](https://docs.discord.com/developers/events/gateway#privileged-intents).
 
-From the repository root:
+### Installation and permissions
 
-```powershell
-cd voice_service
-npm install
-npm start
-```
+Use `bot` and `applications.commands` for Guild Install. Jenny can use DMs with users who share a server with the bot. You do not need User Install for that.
 
-The shared bot joins the voice channel of the user who requests it. Use `/joinvc`, `/leavevc`, and `/voicestatus`; spoken reply behavior is controlled with `/replymode`. Voice transcription tries Groq Whisper with the primary key, then the backup key using the same model. Speech output uses Deepgram Flux Haley. Both Python and Node log in as the same bot identity.
+| Permission | When to grant it |
+| --- | --- |
+| View Channel, Send Messages, Read Message History | In channels Jenny should use. History lets her load older replied-to messages. |
+| Embed Links | For recipe cards, trivia and command reports, and profile embeds. |
+| Send Messages in Threads | If you want Jenny to reply inside threads. |
+| Connect, Speak | In the voice channels you want Jenny to use. |
+| Manage Roles | Only for role changes. Place Jenny's bot role above roles it may manage. The requester must also meet Jenny's admin and role hierarchy checks. |
 
-For voice replies with multiple sentences, Jenny starts playing the first sentence while later sentences are synthesized. Single-sentence replies still wait for the speech provider to finish generating that audio.
+Jenny does not need the **Administrator** permission. Members who should use slash commands need **Use Application Commands** in the channel. Review [Discord permissions](https://docs.discord.com/developers/topics/permissions) and [command permissions](https://docs.discord.com/developers/docs/interactions/slash-commands#permissions) if commands are missing for specific roles.
 
-## Minecraft RAG data
+## API keys and free usage
 
-Place the Minecraft instance's `mods/` and `config/` folders beside this repository, or pass their paths to the builder. The one-time extraction and indexing pipeline is kept under `tools/rag`:
+Start with one text provider. Extra keys give Jenny more routes when a provider is unavailable or hits its quota. Backup keys are optional, and keys from the same account or project can share a quota. Use only accounts and credentials you are authorized to use under each provider's terms.
 
-```powershell
-   .\.venv\Scripts\python.exe tools\rag\build_index.py --mods-dir .\mods --config-dir .\config
-```
+| Service | What Jenny uses it for | Get a key and check limits |
+| --- | --- | --- |
+| Groq | GPT-OSS chat, Qwen image analysis, Whisper transcription | Sign into [GroqCloud](https://console.groq.com/keys), create an API key, and paste it into `GROQ_API_KEY`. Check your [account limits](https://console.groq.com/settings/limits) and [rate limit guide](https://console.groq.com/docs/rate-limits). The published free table lists GPT-OSS 120B at 30 requests/minute, 1,000/day, 8,000 tokens/minute, and 200,000/day. Whisper also has audio duration quotas. |
+| OpenRouter | Optional first chat route | Create a key in [OpenRouter settings](https://openrouter.ai/settings/keys). The example uses [GPT-OSS 120B's free variant](https://openrouter.ai/openai/gpt-oss-120b:free). Free variants do not require buying credits and are normally capped at 20 requests/minute and 50/day without a qualifying credit purchase. See the [free model guide](https://openrouter.ai/collections/free-models). |
+| Google Gemini | Optional chat, vision, trivia and memory fallback | Create a key in [Google AI Studio](https://aistudio.google.com/apikey) and verify the project plan. [Model pricing](https://ai.google.dev/gemini-api/docs/pricing) shows which models have free API access. [Limits](https://ai.google.dev/gemini-api/docs/rate-limits) vary by model and project. Gemini's [terms](https://ai.google.dev/gemini-api/terms) have age, audience and regional rules. Leave it disabled if those rules do not fit your server. |
+| Tavily | Optional web lookup | Sign into the [Tavily dashboard](https://app.tavily.com/) and copy a key to `TAVILY_API_KEY`. Tavily documents 1,000 free credits a month without a card. Jenny requests basic search, which uses one credit per call. See [API credits](https://docs.tavily.com/documentation/api-credits). |
+| Deepgram | Optional spoken responses | Create a project and API key in the [Deepgram console](https://console.deepgram.com/). Deepgram documents a [$200 starter credit](https://developers.deepgram.com/guides/fundamentals/make-your-first-api-request). Check [pricing](https://deepgram.com/pricing) and your project's [Flux TTS](https://developers.deepgram.com/docs/flux-tts/voices) access. Credit can run out. |
 
-The builder runs all three stages in order: JAR/config extraction, searchable document generation, then ChromaDB embedding/index creation. Running `extract_modpack_data.py` by itself only completes the first stage, so it does not create `data/processed/all_documents.json` or populate ChromaDB. Generated indexes and extracted data are local runtime artifacts and are ignored by Git. Re-run the builder after changing mods/configs. Do not publish a pack's private configuration or credentials.
+You can run basic Jenny chat on a supported free tier without linking a credit card. Keep paid billing off and use the exact free model ID where a provider has separate paid and free routes. Provider quotas, eligibility, verification and availability can change. Free access is limited and optional voice uses Deepgram credits. You can skip a service if its terms or signup requirements do not work for you.
 
-Supported config formats include TOML, JSON/JSON5, YAML, properties, CFG, CONF, INI, SNBT, and TXT. Unsupported formats are skipped. Files larger than the extraction limit are skipped. Treat any redaction as best-effort and review extracted output before sharing it.
+## Configure the environment file
 
-Mod metadata readers recognize Forge/NeoForge TOML, Fabric/Quilt JSON, and legacy Forge `mcmod.info`. Localization includes modern JSON and older `.lang` files across resource namespaces. Standard data-pack recipes and advancements are read from singular and plural directory names and namespaces that differ from the loader mod ID. Structured JSON in data-pack and custom asset data folders is also flattened into searchable evidence. Jenny indexes a compact manifest of texture and model resource names and their references, but does not embed image pixels or infer what a texture looks like. Extraction does not validate that a pack's mods support the same Minecraft version or loader, and it cannot decode every mod's private recipe/config format. A mod appearing in `/mods` confirms metadata was found, not that all of its custom content was extracted. One bot installation indexes one pack corpus shared across its Discord servers.
+Copy [`.env.example`](.env.example) to a file named exactly `.env` in the project root. It contains plain `NAME=value` lines. Add your real token after the equals sign without angle brackets. Both runtimes load this file. Restart them after edits. For every field and default, see the [configuration reference](CONFIGURATION.md).
 
-Use `/recipe <item>` for extracted standard recipe cards. Recipe grids show a compact symbol pattern with a legend. Choose separate recipe messages when a search finds multiple recipes. Custom machines and recipe systems need dedicated parsers; a missing standard recipe match means the current corpus has no matching record, not proof that an item has no recipe.
+Minimal example with placeholders:
 
-See [tools/rag/README.md](tools/rag/README.md) for the exact expected folder layout, supported extensions, extraction boundaries, build command, and troubleshooting. The startup warning `all_documents.json` not found means the processing stage did not produce the corpus in the bot's `data/processed` folder. A `chroma.sqlite3` file alone does not prove that it contains vectors; check the builder's final document count and generated `data/embeddings/rag_manifest.json`.
+~~~dotenv
+DISCORD_TOKEN=replace_with_your_bot_token
+GROQ_API_KEY=replace_with_your_groq_key
+~~~
 
-Jenny cites retrieved evidence sources in modpack answers. `RAG_MAX_DISTANCE` controls which vector matches count as evidence: lower values are stricter, but may miss relevant material. Tune it with representative questions. If no local evidence qualifies, the answer should say what is unknown; web results are supplementary context only.
+Keep `.env` private. A previously configured `OPENROUTER_MODEL=openai/gpt-oss-120b` still selects the paid route. Set `OPENROUTER_MODEL=openai/gpt-oss-120b:free` to use the free variant.
 
-At runtime, vector retrieval is limited to Minecraft/mod/config questions and short follow-ups to recent related turns. The heavy RAG and embedding modules load only when needed, reducing normal startup time and idle memory use. The first RAG query may take longer while the local embedding model initializes. Set `RAG_PREWARM=true` in `.env` to trade startup-time resource use for a warmer first query. Shared server chat logs are added for explicit history questions and a small nearby-message slice is added for short, context-dependent follow-ups.
+## Optional voice service
 
-The one-time local index build embeds every extracted document on the machine. To keep that work from saturating a laptop, the defaults cap PyTorch at 2 CPU threads and use 64-document Chroma batches with 16-text embedding batches. Set `RAG_CPU_THREADS`, `RAG_INDEX_BATCH_SIZE`, and `RAG_EMBED_BATCH_SIZE` in `.env` to tune peak resource use; the thread and batch settings affect build speed and memory, not embedding quality. Rebuilding is only needed after changing the mod/config corpus or extraction code.
+Start Python first. Fill in a Groq key for Whisper and a Deepgram key for spoken replies. Install the pinned voice dependencies once:
 
-## What the bot can do
+~~~powershell
+npm ci --prefix voice_service
+node voice_service/index.js
+~~~
 
-- Reply in servers only when Jenny's name or bot account is mentioned; replies to other users and ordinary main-channel messages do not trigger her. Every DM is treated as a direct conversation.
-- Keep bounded recent context plus automatically summarized long-term channel, voice, and user memory. Active streams are checked every 15 minutes; a new stream gets an initial summary, then summaries run after 25 new records or six hours of activity.
-- Search recent stored server chat and summarize channels.
-- Answer server, member, profile-history, last-message, and token-usage questions; `/help` lists commands available in that context as a public response. `/serverinfo` and `/user` have 24-hour, 7-day, and 30-day buttons that show only the selected activity window.
-- Browse large lists and histories through button-paged embeds. `/recipe` shows extracted recipe cards, and `/trivia` supports timed solo rounds or first-correct multiplayer with difficulty, question count, replay, and a server leaderboard.
-- Show member avatars and roles. Assign and remove roles only when the requester is an administrator, outranks the role, and Jenny also has Manage Roles and outranks it.
-- Include the current speaker's and Jenny's actual guild roles in server text and voice context, so role-aware answers use live server information.
-- Show a Minecraft Singleplayer 26.3 Playing activity with elapsed time in the title, refreshed every 15 seconds and reset when the Python bot restarts. Bot presence cannot use a custom large image; a custom activity image is not included in this repository release.
-- Analyze attached images, replied-to images, Discord embed previews, and direct GIF/image links from trusted Discord, Tenor, and Giphy hosts. Animated GIFs are sampled at up to three frames before their visual evidence is passed to the chat model. Recent image context can be reused during text and voice follow-ups.
-- Transcribe voice-message attachments posted in Jenny's configured channel.
-- Send incoming server messages, Jenny's generated replies, and profile events to the selected logs channel. Direct messages stay private in the local database.
-- Show per-user AI token counts, chat message counts, total voice-channel connected time, voice inputs, captured speech time, and speech-to-text/text-to-speech processing time for selectable periods. Server-wide usage is administrator-only; `/myusage` shows only the caller's totals and is available in DMs.
-- Voice-channel connection time begins when this tracker is installed and running; Discord does not provide historical voice-presence totals, and downtime across restarts is excluded.
-- Browse the latest 100 voice inputs and stage timings with `/voicetimes`; full turn records are written to the ignored `logs/voice-turns.jsonl` file.
-- Keep separate Python and Node terminal logs in `logs/python-runtime.log` and `logs/voice-runtime.log`. Logs rotate or are pruned automatically and remain local.
-- Show every slash-command result in the channel as a normal public message. `/mymemory`, `/myusage`, and other personal reports are public too, so use them only in a channel where that is appropriate.
-- Browse the full mod roster with `/mods`, search every extracted corpus entry with `/searchpack`, and browse every matching standard recipe with `/recipe`. Results are paginated instead of silently stopping at the first few matches. Roster questions such as "what mods is Jenny playing?" use the complete local manifest. When local evidence is missing, optional web lookup can add clearly labeled background, not proof of installed-pack behavior.
+On Windows, `.\RUN_VOICE_SERVICE.bat` starts the installed Node runtime. `.\start_hybrid_system.bat` checks that the Python API is already reachable and opens the voice service in a second window. Both processes use the same Discord bot token. They have separate runtime logs. Use `/joinvc` from a server voice channel, and `/leavevc` to disconnect.
 
-## How conversation summaries work
+`/replymode` controls future **chat-triggered** replies. Voice turns normally speak. A requested text copy or a command with a Discord result can appear in the configured text channel.
 
-Jenny stores a short recent conversation window separately from long-term summaries. The short window holds up to 24 message entries, about 12 user and assistant exchanges, for each user and conversation. A server channel, voice room, and DM do not share the same raw chat history.
+## Minecraft modpack data
 
-When a message is logged, Jenny increments that stream's activity counter. A new stream gets its first summary after activity is detected. After that, a background task picks it up at 25 new records or after six hours of accumulated activity. The task checks every 15 minutes and summarizes at most 30 unprocessed records per run. If a provider returns invalid JSON, Jenny retries once with at most 10 records; repeated failures use increasing delays up to six hours instead of retrying on every scheduler pass. Gemini is tried first for these background jobs, followed by OpenRouter, Groq, and Groq backup. Server text memory excludes Jenny's own replies; DM text memory only receives incoming human messages. Jenny saves user memories once in a canonical Discord-ID scope and advances the stream's processed-record cursor.
+Put your mod JARs in `mods/` and instance config files in `config/`, or pass their paths to the builder. Then run:
 
-Server text summaries are scoped to their text channel; voice summaries are scoped to their server. Personal long-term memory uses the user's stable Discord ID and is shared across that person's DMs, server text, and server voice. Jenny also keeps dated personal conversation summaries for the most recent seven days to help with follow-ups. Each automatic maintenance run updates the durable summary with stable facts and ongoing projects; dated summaries expire after a week, keeping only durable details in long-term memory. Legacy scope-specific memories remain readable during migration, but new writes use one canonical row to avoid duplicates. `/mymemory` shows the current shared memory. `/forgetmydata` clears the caller's conversation histories, dated summaries, and saved memories across all scopes. System maintenance notes are excluded from activity counts and summary input. If more than 30 records are waiting, the remaining count is retained so later runs continue processing the backlog.
+~~~powershell
+.\.venv\Scripts\python.exe tools\rag\build_index.py --skip-trivia
+~~~
 
-The default 90-day cleanup removes old detailed message, voice, usage, profile-history, image-context, and short conversation-history records. Dated personal summaries expire after seven days; compact durable summaries remain until the user clears them with `/forgetmydata` or an administrator clears their history.
+This extracts files, creates searchable documents, and builds a local vector index. Run without `--skip-trivia` to also build the trivia bank, or use `--trivia-only` after an existing extraction. Trivia generation uses your model quota. It aims for 100 questions each for descriptions, recipes, and items/blocks, subject to usable local evidence and provider availability. Read the [RAG guide](tools/rag/README.md) for supported formats, flags, and troubleshooting. Restart Jenny after refreshing the index.
 
-See [CHANGELOG.md](CHANGELOG.md) for Jenny's current release notes. `/health` checks the Discord connection, Python API, optional voice service, local RAG corpus, log channel permissions, and Message Content Intent configuration. `/mods`, `/recipe`, and `/searchpack` use locally extracted data and paginate complete result sets. The current extractor indexes mod, recipe, item, block, config, advancement, and asset-reference documents; it does not currently create a dedicated mob/entity document type. Gemini writes pack-trivia clues from extracted local facts only; the answer must match a known mod name, and the cited evidence is checked against the supplied facts. Questions and solve times are stored separately in `data/trivia_cache.sqlite3`. New games request five questions by default (at least five, with longer games configurable); after the cache reaches 100 entries, each game requests about half fresh questions and fills the rest from the cache. Trivia rounds are public messages with a live countdown. Solo play reserves answers for the host and advances on request. Party play advances automatically, with three points for the final question. Jenny can route chat requests to trivia using the requested mode, difficulty, and question count. Multiplayer scores stay within the server. Configured logs channels receive direct Jenny conversations, slash commands, button interactions, profile changes, and errors, not ordinary unrelated chat messages.
+Jenny searches extracted data for installed pack facts. Recipe cards use source patterns for grids and list the materials and bench for supported custom recipes such as TaCZ. The **Web search** button accepts a query or uses the current result if left blank. Web results are external references and may describe a different game version or pack.
 
-Jenny's Minecraft Playing status is refreshed every 15 seconds and shows `Minecraft` with a second line for `Singleplayer · Version 26.3 · HH:MM:SS`. Discord's bot gateway presence supports basic activity status but does not expose the desktop game's custom artwork card controls. The user-supplied grass-block image is maintainer-local and is not included in this public repository release. The elapsed timer resets when the Python bot restarts.
+## Commands
 
-If chat appears silent, check the Python runtime log for `[EVENT] on_message received`. If that trace never appears, verify Message Content Intent is enabled both in the code and in the Discord Developer Portal, then confirm the bot has View Channel and Read Message History permissions. `/health` also reports the code-side intent and configured log-channel send/embed permissions.
+Use `/help` to see commands you can run in the current context. You can also ask Jenny to run a command in chat, DMs, or voice. Admin and role checks still apply.
 
-Discord does not expose members' private profile bios through the bot API.
+| Area | Commands |
+| --- | --- |
+| Setup, health and feedback | `/help`, `/health`, `/report`, `/setmainchannel`, `/getmainchannel`, `/setlogschannel`, `/getlogschannel`, `/togglejenny`, `/models`, `/setmodel`, `/changelog` |
+| Minecraft | `/mods`, `/modcontents`, `/recipe`, `/searchpack`, `/trivia`, `/trivialeaderboard` |
+| Voice | `/joinvc`, `/leavevc`, `/voicestatus`, `/replymode`, `/voicetimes` |
+| People and roles | `/serverinfo`, `/user`, `/profile`, `/avatar`, `/roles`, `/profilehistory`, `/recentchanges`, `/finduser`, `/lastseen`, `/assignrole`, `/removerole`, `/refreshprofiles` |
+| Memory and usage | `/searchchat`, `/summarize`, `/mymemory`, `/forgetmydata`, `/forgetme`, `/myusage`, `/tokenusage` |
 
-The activity is a bot-supported Playing status, not the full Rich Presence integration available to desktop games. The elapsed time is shown as text and advances once per minute.
+`/recipe item:` searches outputs and `used_item:` searches ingredients. `/mods mod:` filters the roster and `/modcontents mod:` browses one mod by category. When a result spans multiple pages, use **Back**, **Next**, or the page number to navigate.
 
-Memory and searchable logs are stored locally in SQLite (`Jenny/memory.db`). They are not shared across installations. Users with access to the host can access that database, so apply appropriate filesystem and backup controls.
+## Memory and data
 
-## Configuration notes
+Jenny keeps recent conversation turns per Discord user and conversation. The Python task summarizes active streams and keeps dated personal summaries for seven days. Durable personal details are keyed by Discord user ID across that person's DMs, server chat and voice. Channel summaries and raw conversations are scoped to their source. Recent visible command results can be included as context in the same channel.
 
-- `.env` is shared by both processes. The text fallback order is OpenRouter GPT-OSS 120B, Groq GPT-OSS 120B, Groq backup with that same model, then Gemini 3.6. Vision uses Qwen 3.8 27B on Groq and its backup key, then Gemini. Tavily uses the primary key and then its backup key.
-- Backup credentials do not use separate model settings: each retry uses the same model ID as its primary provider.
-- Set server channels and voice reply modes using the bot's slash commands. Guild configuration is stored per server.
-- Global slash commands replace prior global definitions; startup also removes leftover guild-scoped copies from old development runs. New global command updates can take time to appear in Discord.
-- For safety, keep bot tokens and API keys out of source control, screenshots, logs, and shared RAG documents. Rotate credentials immediately if exposed.
+Local storage includes `Jenny/memory.db`, generated pack data under `data/`, and runtime logs under `logs/`. Depending on enabled features and the request, selected chat, images, audio, pack facts, or search queries are sent to the configured API provider. Discuss voice transcription and data retention with your server members before enabling them. See [configuration and storage](CONFIGURATION.md#storage-and-privacy).
 
-## Project layout
+## Resource use
 
-```text
-Jenny/                    Discord bot, prompts, SQLite memory, commands, and game activity
-tools/rag/                One-time mod/config extraction, processing, and index build tools
-voice_service/            Optional Node voice capture, transcription, and speech playback
-jenny_api_server.py       Always-running local HTTP bridge used by the voice process
-jenny_rag_integration.py  Runtime retrieval adapter imported by the Discord bot
-data/                     Local extracted documents and ChromaDB index, generated per installation
-requirements.txt          Python dependencies
-```
+On the maintainer's setup, idle or light use was roughly **80 MB RAM for Python** and **40 MB for Node.js**. Loading the local RAG model and index brought Python to roughly **500 MB**. The extra memory holds the embedding model, search index and retrieved data in the process, so Jenny can reuse them between requests. Idle CPU use is usually low. Extraction, indexing, local embeddings, and active voice can use more CPU and RAM. These are approximate observations and vary with the machine, library versions, server count and pack size. Leave `RAG_PREWARM=false` to defer RAG loading until needed.
 
-The two root-level Python modules are runtime components, not extraction tools. `jenny_api_server.py` connects the optional Node voice process to the already-running Python bot, and `jenny_rag_integration.py` is imported by the bot for live retrieval. The `tools/rag/` folder contains commands that an owner runs to build or refresh local modpack data.
+## FAQ
 
+### Do I need all the API keys?
+
+No. A Discord token and one text model key are enough for chat. Add a Groq key for Qwen vision or Whisper, Deepgram for speech output, and Tavily for web lookup. The [configuration reference](CONFIGURATION.md) lists every setting.
+
+### Jenny is online, but why doesn't she answer?
+
+In a server, mention Jenny, say her name, or reply directly to one of her messages. Check Message Content Intent, channel access, `/togglejenny`, `/health`, and the latest lines in `logs/python-runtime.log`. If slash commands are missing, check the install scopes and server command permissions.
+
+### Why isn't voice working?
+
+Run the Node service as well as Python. Confirm `/health` shows it online, join a voice channel, then run `/joinvc`. Check Connect and Speak permissions, provider access, and FFmpeg on `PATH`. A failed join reports an error and stops. See `logs/voice-runtime.log` for connection, STT and TTS details.
+
+### Why isn't my mod or recipe showing?
+
+Check that the installed JAR was extracted and the index build completed. Some mods generate recipes at runtime or store them in formats Jenny does not support yet. Report the mod name, version, Minecraft version, loader and a sanitized example. See the [RAG guide](tools/rag/README.md).
+
+### Why does a provider return 429?
+
+Its quota or rate limit has been reached. Jenny can try the next configured provider. Wait for the limit to reset or reduce traffic. A second key tied to the same quota usually cannot increase it.
+
+### Can I change her personality?
+
+Yes. Edit [`Jenny/Prompts.py`](Jenny/Prompts.py) and restart Python. Keep API keys and personal data out of prompts and commits.
+
+## Roadmap
+
+- Broader mod, loader and Minecraft version coverage. The long-term aim is support across all three, with compatibility tested and documented as it grows.
+- More Discord features and commands.
+- More ways to customize Jenny and the features an installation enables.
+- A hosted option, if it turns out to be practical.
+
+Expect more updates as the project grows. Bug reports and suggestions help decide what comes next.
+
+## Project files and development
+
+See the [file-by-file guide](PROJECT.md) for the runtime, extraction tools, setup files, and generated files that stay local. See [CONTRIBUTING.md](CONTRIBUTING.md) for code changes and checks and [CHANGELOG.md](CHANGELOG.md) for release history.
+
+## Support and license
+
+Open a [GitHub issue](https://github.com/MotrynStudios/Jenny/issues/new/choose), contact **theinevitableinvincible** on Discord, or email [motrynstudios@gmail.com](mailto:motrynstudios@gmail.com). Bugs, extraction reports, questions, suggestions, collaborations, and hiring inquiries are welcome. See [support](SUPPORT.md) for what to include and [security reporting](SECURITY.md) for private vulnerability reports.
+
+Jenny is released under the [MIT License](LICENSE), copyright Mohamed Ayman Elnashar. Preserve the copyright and license notice when redistributing the code.

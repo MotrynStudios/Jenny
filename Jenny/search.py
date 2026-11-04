@@ -50,7 +50,8 @@ async def perform_search(query, max_results=3):
                     content = result.get("content", "")
                     if len(content) > 200:
                         content = content[:200] + "..."
-                    summary_parts.append(f"{j}. {title}: {content}")
+                    source = result.get("url", "")
+                    summary_parts.append(f"{j}. {title} ({source}): {content}" if source else f"{j}. {title}: {content}")
 
             if summary_parts:
                 key_label = "primary" if i == 0 else "backup"
@@ -69,4 +70,3 @@ async def perform_search(query, max_results=3):
 
     print("[SEARCH] All Tavily keys failed")
     return None
-

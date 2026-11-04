@@ -23,6 +23,9 @@ def main() -> int:
     parser.add_argument("--config-dir", type=Path, default=PROJECT_ROOT / "config", help="Minecraft instance config folder")
     parser.add_argument("--output-dir", type=Path, default=PROJECT_ROOT / "data", help="Generated data/index folder")
     parser.add_argument("--limit", type=int, help="Limit mod JARs for a quick development run")
+    trivia = parser.add_mutually_exclusive_group()
+    trivia.add_argument("--skip-trivia", action="store_true", help="Build the local index without model calls")
+    trivia.add_argument("--trivia-only", action="store_true", help="Fill trivia banks without rebuilding the index")
     args = parser.parse_args()
     output = args.output_dir.resolve()
 
@@ -33,8 +36,13 @@ def main() -> int:
     if args.limit:
         extract_command.extend(["--limit", str(args.limit)])
         process_command.extend(["--limit", str(args.limit)])
+    if args.skip_trivia:
+        extract_command.append("--skip-trivia")
 
     try:
+        if args.trivia_only:
+            run_step([*extract_command, "--trivia-only"], "Fill trivia question banks")
+            return 0
         run_step(extract_command, "Extract mods and config files")
         run_step(process_command, "Create searchable evidence documents")
         sys.path.insert(0, str(PROJECT_ROOT))
@@ -66,4 +74,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

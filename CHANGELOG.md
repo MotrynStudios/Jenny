@@ -1,7 +1,26 @@
 # Jenny changelog
 
-## Unreleased
+## 0.94f
 
+- Fixed cold exact-ID recipe lookups by reading extracted records before loading vector search. The encoder uses local cached weights when available, and `/health` distinguishes a cold index from a loaded one.
+- Focused recipe Web searches on the output item and added an opt-in `/report` form for public GitHub issues.
+- Documented tested Minecraft 1.21.1 NeoForge coverage, the roadmap, and the MotrynStudios repository.
+
+- Rewrote setup, provider, configuration, and support docs. Added a FAQ and a file-by-file guide.
+- Made the free GPT-OSS route the OpenRouter default. Removed unused settings and old voice command handlers. Fixed duplicate voice text copies and overlapping speech polls.
+- Replaced queued join notices with one confirmed voice result. Failed connection attempts and reconnects now stop after a deadline.
+- Cached recent command activity and visible embeds in the channel log for follow-ups, and expanded recent conversation budgets by 1,000 tokens.
+- Made Web search open an optional query field and removed duplicate text acknowledgements after command embeds.
+- Fixed stale voice joins after restarts with a fresh intent check, expiring operations, and live connection snapshots.
+- Added a one-second ASCII trivia clock with a progress bar and private wrong-answer feedback.
+- Added recipe output and ingredient autocomplete, mod autocomplete, `/modcontents`, page jump/search, and external web lookup buttons. Added TaCZ workbench cards and server-wide `/roles`.
+- Redesigned trivia with a separate ASCII clock, configurable round time, distinct question categories, and a prebuilt cache targeting 100 questions per category. Fixed stale buttons, duplicate solo advances, and repeated guesses in party rounds.
+- Routed model-selected commands through the slash handlers in chat, DMs, and voice. Blocked control text at the speech boundary and removed keyword shortcuts.
+- Fixed direct replies to embed results and scoped follow-up context to the correct channel. Skipped rate-limited model accounts until they can be retried.
+- Fixed removed mod data lingering in the next RAG build and included source links in web search evidence.
+- Fixed repeated voice joins by removing the command extractor that turned any mention of `CMD:joinvc` into an action, tightening Jenny's join intent rules, and making the voice API ignore joins that are already connected or queued. Trivia now falls through Gemini, OpenRouter, Groq, and Groq backup, validating each question against local pack facts before caching it.
+- Fixed `/replymode` to control chat-triggered replies only; voice turns and voice notes default to speech and post answers in chat only when requested. Routed natural-language mode changes through Jenny's AI command flow, removed presence refresh log spam, tightened pack-data answers, and added retrieval timing logs.
+- Added `/models` and per-server `/setmodel` controls for chat and image routes; model status and choices now reflect configured provider keys. Tightened Jenny's default replies so she keeps casual text and voice answers brief.
 - Fixed role requests with trailing AI text, exact name resolution, and direct mentions; recipe files stored as one object now appear in complete `/recipe` and `/searchpack` results.
 - Made slash command results public, added seven-day summaries, kept only durable details long term, and removed a duplicate cleanup helper.
 - Made command failures public too; hid unused `/myusage` page controls, cached Gemini trivia separately, and displayed average solve times.
@@ -188,4 +207,3 @@ Jenny's current public feature baseline. This list describes intended available 
 - Removed stale guild-scoped slash command registrations left by old test syncs; global commands are now the single source of command definitions.
 - Expanded RAG extraction to nested mod JARs, SNBT, and INI config files.
 - Discord does not expose a member's private profile bio to the bot API.
-

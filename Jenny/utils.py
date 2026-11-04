@@ -19,10 +19,6 @@ _MODPACK_FOLLOW_UP = re.compile(
     r"can it|is it|would it|and then|what if)\b",
     re.IGNORECASE,
 )
-_SINGING_CUES = re.compile(
-    r"(?:[♪♫🎵🎶]|\b(?:sing(?:ing)?|sang|song|lyrics|chorus|la\s+la|na\s+na|doo\s+doo)\b)",
-    re.IGNORECASE,
-)
 _JENNY_WAKE_WORD = re.compile(
     r"\b(?:jenny(?:\s*belle)?|jenni|jennie|jeni|chani|china|shani|sha[a]?ni|jennybell)\b",
     re.IGNORECASE,
@@ -57,22 +53,6 @@ def should_retrieve_modpack_context(text: str, recent_messages: Optional[List[Di
     # unrelated conversation retrieve the database indefinitely.
     user_turns = [message.get("content", "") for message in recent_messages if message.get("role") == "user"]
     return any(is_modpack_related(content) for content in user_turns[-3:])
-
-
-def looks_like_singing(text: str) -> bool:
-    """Conservative, local cue check for explicit or strongly repeated singing."""
-    if not text:
-        return False
-    if _SINGING_CUES.search(text):
-        return True
-    normalized = re.sub(r"[^\w\s]", " ", text.lower())
-    words = re.findall(r"\b[\w']+\b", normalized)
-    if len(words) >= 4 and len(set(words)) <= max(2, len(words) // 3):
-        return True
-    repeated_phrase = re.search(r"\b((?:\w+\s+){1,4}\w+)\s+\1\b", normalized)
-    if repeated_phrase and len(words) >= 6:
-        return True
-    return False
 
 
 def contains_jenny_wake_word(text: str) -> bool:

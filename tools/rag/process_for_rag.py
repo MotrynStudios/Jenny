@@ -606,8 +606,19 @@ class ModpackDataProcessor:
         """Run the data processing pipeline"""
         logger.info("Starting modpack data processing for RAG")
         
-        # Get all mod directories
-        mod_dirs = [d for d in self.raw_data_dir.iterdir() if d.is_dir()]
+        # Old raw folders can remain on disk after removing a mod. Only index
+        # directories in the current extraction manifest when one is available.
+        mod_dirs = sorted(d for d in self.raw_data_dir.iterdir() if d.is_dir())
+        manifest_path = self.raw_data_dir.parent / "modpack_summary.json"
+        if manifest_path.is_file():
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            rows = manifest.get("mods", []) if isinstance(manifest, dict) else manifest
+            if not isinstance(rows, list):
+                raise ValueError(f"Invalid mod manifest: {manifest_path}")
+            current_mods = {row.get("mod_id") for row in rows if isinstance(row, dict)}
+            skipped = len(mod_dirs)
+            mod_dirs = [directory for directory in mod_dirs if directory.name in current_mods]
+            logger.info("Excluded %s raw mod folders outside the current manifest", skipped - len(mod_dirs))
         
         if limit:
             mod_dirs = mod_dirs[:limit]

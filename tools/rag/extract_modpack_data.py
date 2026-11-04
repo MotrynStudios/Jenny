@@ -264,7 +264,7 @@ class ModpackExtractor:
         try:
             with zipfile.ZipFile(jar_path, 'r') as jar:
                 paths = [path for path in jar.namelist() if re.match(
-                    r"^assets/[^/]+/lang/(en_us|en_US|en|en_ud)\.(json|lang)$", path)]
+                    r"^assets/(?:[^/]+/custom/[^/]+/assets/)?[^/]+/lang/(en_us|en|en_ud)\.(json|lang)$", path, re.I)]
                 for path in sorted(paths):
                     try:
                         with jar.open(path) as source:
@@ -508,53 +508,21 @@ class ModpackExtractor:
         )
     
     def save_mod_data(self, mod_data: ModData):
-        """Save extracted mod data to JSON files"""
+        """Overwrite every extracted dataset, including data removed by a mod update."""
         mod_dir = self.raw_data_dir / mod_data.metadata.mod_id
         mod_dir.mkdir(exist_ok=True)
-        
-        # Save metadata
-        metadata_path = mod_dir / "metadata.json"
-        with open(metadata_path, 'w', encoding='utf-8') as f:
-            json.dump(asdict(mod_data.metadata), f, indent=2, ensure_ascii=False)
-        
-        # Save language data
-        if mod_data.language_data:
-            lang_path = mod_dir / "language.json"
-            with open(lang_path, 'w', encoding='utf-8') as f:
-                json.dump(mod_data.language_data, f, indent=2, ensure_ascii=False)
-        
-        # Save recipes
-        if mod_data.recipes:
-            recipes_path = mod_dir / "recipes.json"
-            with open(recipes_path, 'w', encoding='utf-8') as f:
-                json.dump(mod_data.recipes, f, indent=2, ensure_ascii=False)
-        
-        # Save advancements
-        if mod_data.advancements:
-            advancements_path = mod_dir / "advancements.json"
-            with open(advancements_path, 'w', encoding='utf-8') as f:
-                json.dump(mod_data.advancements, f, indent=2, ensure_ascii=False)
-
-        if mod_data.gun_data:
-            with open(mod_dir / "gun_data.json", "w", encoding="utf-8") as f:
-                json.dump(mod_data.gun_data, f, indent=2, ensure_ascii=False)
-
-        if mod_data.custom_data:
-            with open(mod_dir / "custom_data.json", "w", encoding="utf-8") as f:
-                json.dump(mod_data.custom_data, f, indent=2, ensure_ascii=False)
-
-        if mod_data.asset_data:
-            with open(mod_dir / "asset_manifest.json", "w", encoding="utf-8") as f:
-                json.dump(mod_data.asset_data, f, indent=2, ensure_ascii=False)
-        
-        # Save items and blocks
-        items_blocks_path = mod_dir / "items_blocks.json"
-        with open(items_blocks_path, 'w', encoding='utf-8') as f:
-            json.dump({
-                'items': mod_data.items,
-                'blocks': mod_data.blocks
-            }, f, indent=2, ensure_ascii=False)
-    
+        files = {
+            "metadata.json": asdict(mod_data.metadata),
+            "language.json": mod_data.language_data,
+            "recipes.json": mod_data.recipes,
+            "advancements.json": mod_data.advancements,
+            "gun_data.json": mod_data.gun_data,
+            "custom_data.json": mod_data.custom_data,
+            "asset_manifest.json": mod_data.asset_data,
+            "items_blocks.json": {"items": mod_data.items, "blocks": mod_data.blocks},
+        }
+        for name, contents in files.items():
+            (mod_dir / name).write_text(json.dumps(contents, indent=2, ensure_ascii=False), encoding="utf-8")
     def create_summary(self, all_mod_data: List[ModData]):
         """Create a summary file with all mod information"""
         summary = {
@@ -645,8 +613,7 @@ class ModpackExtractor:
                 self.failed_count += 1
         
         # Create summary
-        if all_mod_data:
-            self.create_summary(all_mod_data)
+        self.create_summary(all_mod_data)
 
         self.extract_config_files()
         
@@ -669,11 +636,26 @@ def main():
     parser.add_argument('--output-dir', default=str(script_dir / 'data'), help='Output directory for extracted data')
     parser.add_argument('--config-dir', help='Minecraft instance config folder (defaults to a sibling config/ folder)')
     parser.add_argument('--limit', type=int, help='Limit number of mods to process (for testing)')
+    trivia = parser.add_mutually_exclusive_group()
+    trivia.add_argument('--skip-trivia', action='store_true', help='Extract locally without model calls')
+    trivia.add_argument('--trivia-only', action='store_true', help='Fill trivia banks from previously extracted facts')
     
     args = parser.parse_args()
     
-    extractor = ModpackExtractor(args.mods_dir, args.output_dir, args.config_dir)
-    extractor.run(limit=args.limit)
+    if not args.trivia_only:
+        extractor = ModpackExtractor(args.mods_dir, args.output_dir, args.config_dir)
+        extractor.run(limit=args.limit)
+    if not args.skip_trivia:
+        import asyncio
+        import sys
+
+        sys.path.insert(0, str(script_dir / "Jenny"))
+        from trivia_bank import seed_trivia_bank
+
+        try:
+            asyncio.run(seed_trivia_bank(Path(args.output_dir).resolve()))
+        except Exception:
+            logger.exception("Trivia seeding failed; extracted data is still available")
 
 
 if __name__ == "__main__":
