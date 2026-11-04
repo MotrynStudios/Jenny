@@ -64,6 +64,7 @@ from database import (
     get_recent_voice_chat,
     cleanup_expired_records,
     get_combined_user_summary,
+    get_recent_user_daily_summaries,
     start_voice_session,
     end_voice_session,
     close_stale_voice_sessions,
@@ -691,6 +692,7 @@ async def handle_dm_message(message: discord.Message) -> None:
     # Get user's personal memory and history
     user_history = get_conversation_history(conversation_id, user_id, limit=24)
     user_summary = get_combined_user_summary(user_id, f"dm:{user_id}")
+    recent_daily_summaries = get_recent_user_daily_summaries(user_id, 7)
 
     # Get recent DM context for this user only
     recent_dm_context = get_recent_dm_text(hours=24, max_entries=10, user_id=user_id)
@@ -702,6 +704,9 @@ async def handle_dm_message(message: discord.Message) -> None:
     # Add user memory context
     if user_summary:
         dm_prompt += f"\n\nUser memory: {user_summary}"
+    if recent_daily_summaries:
+        daily_context = "\n".join(f"{day}: {summary}" for day, summary in sorted(recent_daily_summaries.items()))
+        dm_prompt += f"\n\nRecent conversation summaries from the past seven days:\n{daily_context}"
 
     # Add recent DM context
     if recent_dm_context:
@@ -847,6 +852,33 @@ def is_role_request(text):
                           r"(?:assign|add|give|remove|take|revoke)\s+", text.strip(), re.I))
 
 
+def build_role_resolution_context(message: discord.Message, request: str) -> str:
+    """Give the model real guild candidates so it can map spoken names safely."""
+    guild = message.guild
+    if not guild:
+        return ""
+    words = set(re.findall(r"[a-z0-9]+", request.casefold()))
+    ignored = {"jenny", "please", "can", "could", "you", "give", "assign", "add", "remove",
+               "take", "revoke", "the", "a", "an", "role", "to", "from", "user"}
+    words -= ignored
+    members = list(guild.members)
+    mentioned_ids = {str(member.id) for member in message.mentions}
+    if len(members) > 100:
+        members = [member for member in members if str(member.id) in mentioned_ids or
+                   words.intersection(set(re.findall(r"[a-z0-9]+", f"{member.name} {member.display_name} {member.global_name or ''}".casefold())))]
+    member_lines = [f"{member.display_name} (username {member.name}, id {member.id})" for member in members[:100]]
+    roles = [role for role in guild.roles if not role.is_default() and not role.managed]
+    mentioned_role_ids = {int(role_id) for role_id in re.findall(r"<@&(\d+)>", request)}
+    mentioned_roles = [role for role in guild.roles if role.id in mentioned_role_ids]
+    if len(roles) > 100:
+        roles = list(dict.fromkeys(mentioned_roles + [role for role in roles
+            if words.intersection(set(re.findall(r"[a-z0-9]+", role.name.casefold())))][:100]))
+    role_lines = [f"{role.name} (id {role.id})" for role in roles]
+    return ("For this explicit role request, choose only a member and role from these live guild options. "
+            "Use their exact display name or ID in the JSON. If the intended member or role is ambiguous, ask which one; do not guess.\n"
+            "Members:\n" + "\n".join(member_lines) + "\nRoles:\n" + "\n".join(role_lines))[:12000]
+
+
 async def run_model_chat_action(message, request, command, arguments):
     """Use model arguments only for an explicit matching request."""
     if command == "trivia":
@@ -866,12 +898,33 @@ async def run_model_chat_action(message, request, command, arguments):
         await send_command_error(message, "Explicit role request needed", "Ask me directly to add or remove a role.")
         return
     try:
-        values = json.loads(arguments)
-        member, role = (values[key].strip() for key in ("member", "role"))
+        guild = message.guild
+        if guild is None:
+            raise ValueError("Role changes require a server")
+        mentioned_members = [member for member in message.mentions
+                             if isinstance(member, discord.Member)
+                             and (bot.user is None or member.id != bot.user.id)]
+        mentioned_roles = [guild.get_role(int(role_id)) for role_id in
+                           re.findall(r"<@&(\d+)>", request)]
+        mentioned_roles = [role for role in mentioned_roles if role is not None]
+        # Literal Discord mentions are authoritative. This also avoids making
+        # the model repeat IDs already present in the source message.
+        if len(mentioned_members) == 1 and len(mentioned_roles) == 1:
+            member, role = str(mentioned_members[0].id), str(mentioned_roles[0].id)
+        else:
+            source = arguments.strip()
+            object_start = source.find("{")
+            values, _ = json.JSONDecoder().raw_decode(source[object_start:]) if object_start >= 0 else ({}, 0)
+            if not isinstance(values, dict):
+                raise ValueError("Expected a JSON object")
+            member_value, role_value = values.get("member"), values.get("role")
+            if not isinstance(member_value, str) or not isinstance(role_value, str):
+                raise ValueError("Member and role must be text")
+            member, role = member_value.strip(), role_value.strip()
         member = re.sub(r"^<@!?(\d+)>$", r"\1", member).lstrip("@")
         role = re.sub(r"^<@&(\d+)>$", r"\1", role).lstrip("@")
-        if not member or not role or any(value.casefold() not in request.casefold() for value in (member, role)):
-            raise ValueError("Role arguments must occur in the original request")
+        if not member or not role:
+            raise ValueError("Both member and role are required")
     except (ValueError, TypeError, KeyError, AttributeError):
         await send_command_error(message, "Role change needs clarification", "Include the exact member and role names or mention both.")
         return
@@ -1196,9 +1249,9 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
     embed = discord.Embed(title="Command failed", description="I couldn't finish that command. The error was logged.", color=discord.Color.red())
     try:
         if interaction.response.is_done():
-            await interaction.followup.send(embed=embed, ephemeral=True)
+            await interaction.followup.send(embed=embed, ephemeral=False)
         else:
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await interaction.response.send_message(embed=embed, ephemeral=False)
     except discord.HTTPException as send_error:
         print(f"[COMMAND] Could not report slash-command failure: {send_error}")
 
@@ -1457,6 +1510,8 @@ async def process_incoming_message(message: discord.Message) -> None:
         channel_summary=channel_summary,
         current_time=current_time
     )
+    if message.guild and is_role_request(user_input):
+        messages.append({"role": "system", "content": build_role_resolution_context(message, user_input)})
     if nearby_context:
         messages.append({"role": "system", "content": nearby_context})
 
@@ -2334,3 +2389,4 @@ def check_bot_in_voice_channel(guild_id: str) -> bool:
         return False
 
 bot.run(DISCORD_TOKEN)
+
