@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-- Hide unused `/myusage` page controls, cache Gemini trivia in a separate database, and display average solve times.
+- Fixed role requests with trailing AI text, exact name resolution, and direct mentions; recipe files stored as one object now appear in complete `/recipe` and `/searchpack` results.
+- Made slash command results public, added seven-day summaries, and kept only durable details in long-term memory.
+- Made command failures public too; hid unused `/myusage` page controls, cached Gemini trivia separately, and displayed average solve times.
 
 ## 0.93
 
