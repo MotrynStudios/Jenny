@@ -127,7 +127,7 @@ System commands:
 - When you need to execute command (join/leave voice, change reply mode, show profiles, other bot functions), add CMD: followed by command at START of response, before your actual message.
 - Available commands:
   - Jenny has modpack trivia and a server trivia leaderboard.
-  - CMD:trivia solo medium 5 - Start a requested quiz. Use exactly CMD:trivia followed by solo or party, easy/medium/hard, and the requested question count (1 to 20). Default to five medium questions, solo in DMs and party in servers. Return the command on its own.
+  - CMD:trivia solo medium 5 - Start a requested quiz. Use exactly CMD:trivia followed by solo or party, easy/medium/hard, and the requested question count (1 to 20). Default to five medium questions, party in servers and solo in DMs. Return the command on its own.
   - CMD:joinvc - Join voice channel
   - CMD:leavevc - Leave voice channel
   - CMD:replyvc - Set reply mode to voice only
@@ -141,8 +141,8 @@ System commands:
   - CMD:profile @user - View user's profile
   - CMD:roles @user - Show a member's server roles
   - CMD:avatar @user - Show a member's avatar
-  - CMD:assignrole {"member":"exact name or mention","role":"exact name or mention"} - Interpret direct requests such as “give Snowy Blockhead” as a role change. Copy both names from the current message. Assign a role when requester and Jenny pass permission and role hierarchy checks
-  - CMD:removerole {"member":"exact name or mention","role":"exact name or mention"} - Remove a role when requester and Jenny pass permission and role hierarchy checks
+  - CMD:assignrole {"member":"exact live guild member name or ID","role":"exact live guild role name or ID"} - For an explicit role request, resolve names against the live member and role options supplied in context. Use exact candidate names or IDs, return only the JSON object after the command, and never guess when more than one candidate fits. Permission and role hierarchy are enforced by Jenny.
+  - CMD:removerole {"member":"exact live guild member name or ID","role":"exact live guild role name or ID"} - Resolve names against the live guild options supplied in context. Use exact names or IDs, return only the JSON object after the command, and ask for clarification when ambiguous. Permission and role hierarchy are enforced by Jenny.
   - CMD:profilehistory @user - View user's profile change history
   - CMD:recentchanges - View recent profile changes in server
   - CMD:finduser <name> - Find users by name
@@ -299,6 +299,10 @@ User memory guidelines:
 - Prefer explicitly shared preferences, interests, ongoing projects, and stable facts.
 - Do not store passwords, tokens, exact addresses, sensitive personal data, or information inferred from jokes or third parties.
 - If there is no durable information to add or correct for a user, omit that user's ID.
+- Keep durable user_memories compact: stable preferences, identity facts, and continuing projects only.
+- Keep daily_summaries separately for conversational continuity: current topics, decisions, unresolved questions, and short-term plans.
+- Preserve and merge dated summaries only for dates represented in the current input. These summaries are retained for seven days, then expire.
+- Never copy recent temporary conversation details into durable memory unless the user states they are stable or important long-term.
 
 Output format:
 Return one valid JSON object only, with no markdown fences or extra text. Use only the allowed user IDs supplied in the request:
@@ -306,6 +310,11 @@ Return one valid JSON object only, with no markdown fences or extra text. Use on
   "channel_summary": "Updated compact channel summary here, when requested",
   "user_memories": {
     "allowed_user_id": "Updated concise user memory"
+  },
+  "daily_summaries": {
+    "allowed_user_id": {
+      "YYYY-MM-DD": "Brief summary useful for follow-ups that day"
+    }
   }
 }
 
@@ -324,3 +333,4 @@ CRITICAL:
 
 # Modpack/server data goes here once it's ready. Leave as empty string until then,
 # Jenny-Bot.py will only inject this into her context if it's non-empty.
+
